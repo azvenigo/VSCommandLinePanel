@@ -1,0 +1,188 @@
+<UserControl x:Class="VS_LaunchArguments.CommandLineToolWindowControl"
+             xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:vsui="clr-namespace:Microsoft.VisualStudio.PlatformUI;assembly=Microsoft.VisualStudio.Shell.15.0"
+             IsKeyboardFocusWithinChanged="OnIsKeyboardFocusWithinChanged">
+
+    <UserControl.Resources>
+        <Style x:Key="VsTextBoxStyle" TargetType="TextBox">
+            <Setter Property="Background"               Value="{DynamicResource {x:Static vsui:EnvironmentColors.ComboBoxBackgroundBrushKey}}"/>
+            <Setter Property="Foreground"               Value="{DynamicResource {x:Static vsui:EnvironmentColors.ComboBoxTextBrushKey}}"/>
+            <Setter Property="BorderBrush"              Value="{DynamicResource {x:Static vsui:EnvironmentColors.ComboBoxBorderBrushKey}}"/>
+            <Setter Property="BorderThickness"          Value="1"/>
+            <Setter Property="VerticalAlignment"        Value="Stretch"/>
+            <Setter Property="HorizontalAlignment"      Value="Stretch"/>
+        </Style>
+
+        <!-- Toggle button: dimmed when off, full opacity with bold border when on -->
+        <Style x:Key="ScratchpadToggleStyle" TargetType="ToggleButton">
+            <Setter Property="Background"       Value="Transparent"/>
+            <Setter Property="BorderBrush"      Value="{DynamicResource {x:Static vsui:EnvironmentColors.ComboBoxBorderBrushKey}}"/>
+            <Setter Property="BorderThickness"  Value="1"/>
+            <Setter Property="Foreground"       Value="{DynamicResource {x:Static vsui:EnvironmentColors.ComboBoxTextBrushKey}}"/>
+            <Setter Property="Opacity"          Value="0.45"/>
+            <Setter Property="Padding"          Value="0"/>
+            <Setter Property="Focusable"        Value="False"/>
+            <Style.Triggers>
+                <Trigger Property="IsChecked" Value="True">
+                    <Setter Property="BorderBrush" Value="{DynamicResource {x:Static vsui:EnvironmentColors.ToolWindowTextBrushKey}}"/>
+                    <Setter Property="Opacity"     Value="1.0"/>
+                </Trigger>
+                <Trigger Property="IsMouseOver" Value="True">
+                    <Setter Property="Opacity" Value="0.8"/>
+                </Trigger>
+            </Style.Triggers>
+        </Style>
+    </UserControl.Resources>
+
+    <!--
+        Outer single-cell grid.  The Popup is declared here so it lives in the logical tree
+        (required for PlacementTarget binding), even though it floats outside the visual bounds.
+    -->
+    <Grid x:Name="RootGrid" SizeChanged="RootGrid_SizeChanged">
+
+        <!--
+            Scratchpad popup — only opens when the toggle is on.
+            Opened handler strips WS_EX_TOPMOST via SetWindowPos (Popup.Topmost is .NET 6+ only).
+            Application.Current.Deactivated closes it when VS loses focus.
+        -->
+        <Popup x:Name="ScratchpadPopup"
+               PlacementTarget="{Binding ElementName=RootGrid}"
+               Placement="Top"
+               StaysOpen="True"
+               VerticalOffset="-30"
+               Opened="ScratchpadPopup_Opened">
+            <Border BorderThickness="1"
+                    BorderBrush="{DynamicResource {x:Static vsui:EnvironmentColors.ComboBoxBorderBrushKey}}"
+                    Background="{DynamicResource {x:Static vsui:EnvironmentColors.ToolWindowBackgroundBrushKey}}">
+                <Grid>
+                    <Grid.RowDefinitions>
+                        <RowDefinition Height="Auto"/>
+                        <RowDefinition Height="*"/>
+                    </Grid.RowDefinitions>
+
+                    <!-- Title header with bottom separator -->
+                    <Border Grid.Row="0"
+                            BorderThickness="0,0,0,1"
+                            BorderBrush="{DynamicResource {x:Static vsui:EnvironmentColors.ComboBoxBorderBrushKey}}"
+                            Padding="6,3">
+                        <TextBlock Text="Scratchpad"
+                                   FontWeight="SemiBold"
+                                   Foreground="{DynamicResource {x:Static vsui:EnvironmentColors.ToolWindowTextBrushKey}}"/>
+                    </Border>
+
+                    <!-- Scratchpad text area -->
+                    <TextBox Grid.Row="1"
+                             x:Name="ScratchpadTextBox"
+                             Style="{StaticResource VsTextBoxStyle}"
+                             BorderThickness="0"
+                             Height="150"
+                             AcceptsReturn="True"
+                             TextWrapping="Wrap"
+                             VerticalScrollBarVisibility="Auto"
+                             FontFamily="Consolas"
+                             LostFocus="OnAnyFieldLostFocus"
+                             ToolTip="Scratchpad — copy/paste command lines to switch between (persisted per solution)"/>
+                </Grid>
+            </Border>
+        </Popup>
+
+        <!-- Main row: toggle | Args | drag splitter | Working Dir -->
+        <Grid>
+            <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="Auto"/>                    <!-- scratchpad toggle -->
+                <ColumnDefinition Width="2*"/>                      <!-- args -->
+                <ColumnDefinition Width="4"/>                       <!-- splitter -->
+                <ColumnDefinition Width="*" MinWidth="120"/>        <!-- working dir -->
+            </Grid.ColumnDefinitions>
+
+            <!-- Scratchpad toggle — Focusable=False so clicking it doesn't steal focus from the edit fields -->
+            <ToggleButton Grid.Column="0"
+                          x:Name="ScratchpadToggle"
+                          Style="{StaticResource ScratchpadToggleStyle}"
+                          Width="16"
+                          Margin="0,0,2,0"
+                          IsChecked="False"
+                          Checked="ScratchpadToggle_Checked"
+                          Unchecked="ScratchpadToggle_Unchecked"
+                          ToolTip="Toggle scratchpad popup">
+                <TextBlock Text="🗎" FontSize="16"
+                           VerticalAlignment="Center"
+                           HorizontalAlignment="Center"/>
+            </ToggleButton>
+
+            <!-- Args field with placeholder overlay -->
+            <Grid Grid.Column="1">
+                <TextBox x:Name="ArgsTextBox"
+                         Style="{StaticResource VsTextBoxStyle}"
+                         AcceptsReturn="False"
+                         TextWrapping="NoWrap"
+                         MaxLines="1"
+                         VerticalContentAlignment="Center"
+                         ScrollViewer.VerticalScrollBarVisibility="Hidden"
+                         TextChanged="ArgsTextBox_TextChanged"
+                         GotFocus="OnEditFieldGotFocus"
+                         LostFocus="OnAnyFieldLostFocus"
+                         DataObject.Pasting="OnSingleLinePasting"
+                         ToolTip="Command-line arguments for the active debug configuration"/>
+                <TextBlock IsHitTestVisible="False"
+                           Text="Command-line arguments..."
+                           VerticalAlignment="Center"
+                           Margin="5,0,0,0"
+                           Opacity="0.4"
+                           Foreground="{DynamicResource {x:Static vsui:EnvironmentColors.ComboBoxTextBrushKey}}">
+                    <TextBlock.Style>
+                        <Style TargetType="TextBlock">
+                            <Setter Property="Visibility" Value="Collapsed"/>
+                            <Style.Triggers>
+                                <DataTrigger Binding="{Binding Text, ElementName=ArgsTextBox}" Value="">
+                                    <Setter Property="Visibility" Value="Visible"/>
+                                </DataTrigger>
+                            </Style.Triggers>
+                        </Style>
+                    </TextBlock.Style>
+                </TextBlock>
+            </Grid>
+
+            <!-- Draggable column splitter -->
+            <GridSplitter Grid.Column="2"
+                          Width="4"
+                          HorizontalAlignment="Stretch"
+                          VerticalAlignment="Stretch"
+                          Background="{DynamicResource {x:Static vsui:EnvironmentColors.ToolWindowBorderBrushKey}}"/>
+
+            <!-- Working Dir field with placeholder overlay -->
+            <Grid Grid.Column="3">
+                <TextBox x:Name="WorkingDirTextBox"
+                         Style="{StaticResource VsTextBoxStyle}"
+                         AcceptsReturn="False"
+                         TextWrapping="NoWrap"
+                         MaxLines="1"
+                         VerticalContentAlignment="Center"
+                         ScrollViewer.VerticalScrollBarVisibility="Hidden"
+                         TextChanged="WorkingDirTextBox_TextChanged"
+                         GotFocus="OnEditFieldGotFocus"
+                         LostFocus="OnAnyFieldLostFocus"
+                         DataObject.Pasting="OnSingleLinePasting"
+                         ToolTip="Working directory for the active debug configuration"/>
+                <TextBlock IsHitTestVisible="False"
+                           Text="Working directory..."
+                           VerticalAlignment="Center"
+                           Margin="5,0,0,0"
+                           Opacity="0.4"
+                           Foreground="{DynamicResource {x:Static vsui:EnvironmentColors.ComboBoxTextBrushKey}}">
+                    <TextBlock.Style>
+                        <Style TargetType="TextBlock">
+                            <Setter Property="Visibility" Value="Collapsed"/>
+                            <Style.Triggers>
+                                <DataTrigger Binding="{Binding Text, ElementName=WorkingDirTextBox}" Value="">
+                                    <Setter Property="Visibility" Value="Visible"/>
+                                </DataTrigger>
+                            </Style.Triggers>
+                        </Style>
+                    </TextBlock.Style>
+                </TextBlock>
+            </Grid>
+        </Grid>
+    </Grid>
+</UserControl>
