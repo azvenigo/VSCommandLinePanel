@@ -66,7 +66,7 @@
                             BorderThickness="0,0,0,1"
                             BorderBrush="{DynamicResource {x:Static vsui:EnvironmentColors.ComboBoxBorderBrushKey}}"
                             Padding="6,3">
-                        <TextBlock Text="Scratchpad"
+                        <TextBlock Text="Command Scratchpad"
                                    FontWeight="SemiBold"
                                    Foreground="{DynamicResource {x:Static vsui:EnvironmentColors.ToolWindowTextBrushKey}}"/>
                     </Border>
@@ -105,7 +105,7 @@
                           IsChecked="False"
                           Checked="ScratchpadToggle_Checked"
                           Unchecked="ScratchpadToggle_Unchecked"
-                          ToolTip="Toggle scratchpad popup">
+                          ToolTip="Toggle scratchpad auto-popup on key focus">
                 <TextBlock Text="🗎" FontSize="16"
                            VerticalAlignment="Center"
                            HorizontalAlignment="Center"/>
@@ -124,9 +124,9 @@
                          GotFocus="OnEditFieldGotFocus"
                          LostFocus="OnAnyFieldLostFocus"
                          DataObject.Pasting="OnSingleLinePasting"
-                         ToolTip="Command-line arguments for the active debug configuration"/>
+                         ToolTip="Start application with these arguments"/>
                 <TextBlock IsHitTestVisible="False"
-                           Text="Command-line arguments..."
+                           Text="Args..."
                            VerticalAlignment="Center"
                            Margin="5,0,0,0"
                            Opacity="0.4"
@@ -164,9 +164,9 @@
                          GotFocus="OnEditFieldGotFocus"
                          LostFocus="OnAnyFieldLostFocus"
                          DataObject.Pasting="OnSingleLinePasting"
-                         ToolTip="Working directory for the active debug configuration"/>
+                         ToolTip="Working directory"/>
                 <TextBlock IsHitTestVisible="False"
-                           Text="Working directory..."
+                           Text="Working Directory..."
                            VerticalAlignment="Center"
                            Margin="5,0,0,0"
                            Opacity="0.4"
