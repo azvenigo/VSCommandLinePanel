@@ -33,6 +33,26 @@
                 </Trigger>
             </Style.Triggers>
         </Style>
+
+        <!-- Plain push button styled to match the toggle (dimmed; brightens on hover/press) -->
+        <Style x:Key="ToolbarButtonStyle" TargetType="Button">
+            <Setter Property="Background"       Value="Transparent"/>
+            <Setter Property="BorderBrush"      Value="{DynamicResource {x:Static vsui:EnvironmentColors.ComboBoxBorderBrushKey}}"/>
+            <Setter Property="BorderThickness"  Value="1"/>
+            <Setter Property="Foreground"       Value="{DynamicResource {x:Static vsui:EnvironmentColors.ComboBoxTextBrushKey}}"/>
+            <Setter Property="Opacity"          Value="0.45"/>
+            <Setter Property="Padding"          Value="0"/>
+            <Setter Property="Focusable"        Value="False"/>
+            <Style.Triggers>
+                <Trigger Property="IsMouseOver" Value="True">
+                    <Setter Property="Opacity" Value="0.8"/>
+                </Trigger>
+                <Trigger Property="IsPressed" Value="True">
+                    <Setter Property="BorderBrush" Value="{DynamicResource {x:Static vsui:EnvironmentColors.ToolWindowTextBrushKey}}"/>
+                    <Setter Property="Opacity"     Value="1.0"/>
+                </Trigger>
+            </Style.Triggers>
+        </Style>
     </UserControl.Resources>
 
     <!--
@@ -41,16 +61,12 @@
     -->
     <Grid x:Name="RootGrid" SizeChanged="RootGrid_SizeChanged">
 
-        <!--
-            Scratchpad popup — only opens when the toggle is on.
-            Opened handler strips WS_EX_TOPMOST via SetWindowPos (Popup.Topmost is .NET 6+ only).
-            Application.Current.Deactivated closes it when VS loses focus.
-        -->
+        <!-- Scratchpad popup — only opens when the toggle is on -->
         <Popup x:Name="ScratchpadPopup"
                PlacementTarget="{Binding ElementName=RootGrid}"
                Placement="Top"
-               StaysOpen="True"
                VerticalOffset="-30"
+               StaysOpen="True"
                Opened="ScratchpadPopup_Opened">
             <Border BorderThickness="1"
                     BorderBrush="{DynamicResource {x:Static vsui:EnvironmentColors.ComboBoxBorderBrushKey}}"
@@ -61,17 +77,15 @@
                         <RowDefinition Height="*"/>
                     </Grid.RowDefinitions>
 
-                    <!-- Title header with bottom separator -->
                     <Border Grid.Row="0"
                             BorderThickness="0,0,0,1"
                             BorderBrush="{DynamicResource {x:Static vsui:EnvironmentColors.ComboBoxBorderBrushKey}}"
                             Padding="6,3">
-                        <TextBlock Text="Command Scratchpad"
+                        <TextBlock Text="Scratchpad"
                                    FontWeight="SemiBold"
                                    Foreground="{DynamicResource {x:Static vsui:EnvironmentColors.ToolWindowTextBrushKey}}"/>
                     </Border>
 
-                    <!-- Scratchpad text area -->
                     <TextBox Grid.Row="1"
                              x:Name="ScratchpadTextBox"
                              Style="{StaticResource VsTextBoxStyle}"
@@ -87,29 +101,39 @@
             </Border>
         </Popup>
 
-        <!-- Main row: toggle | Args | drag splitter | Working Dir -->
+        <!-- Main row: toolbar | Args | drag splitter | Working Dir -->
         <Grid>
             <Grid.ColumnDefinitions>
-                <ColumnDefinition Width="Auto"/>                    <!-- scratchpad toggle -->
+                <ColumnDefinition Width="Auto"/>                    <!-- toolbar (scratchpad + history) -->
                 <ColumnDefinition Width="2*"/>                      <!-- args -->
                 <ColumnDefinition Width="4"/>                       <!-- splitter -->
                 <ColumnDefinition Width="*" MinWidth="120"/>        <!-- working dir -->
             </Grid.ColumnDefinitions>
 
-            <!-- Scratchpad toggle — Focusable=False so clicking it doesn't steal focus from the edit fields -->
-            <ToggleButton Grid.Column="0"
-                          x:Name="ScratchpadToggle"
-                          Style="{StaticResource ScratchpadToggleStyle}"
-                          Width="16"
-                          Margin="0,0,2,0"
-                          IsChecked="False"
-                          Checked="ScratchpadToggle_Checked"
-                          Unchecked="ScratchpadToggle_Unchecked"
-                          ToolTip="Toggle scratchpad auto-popup on key focus">
-                <TextBlock Text="🗎" FontSize="16"
-                           VerticalAlignment="Center"
-                           HorizontalAlignment="Center"/>
-            </ToggleButton>
+            <!-- Toolbar: scratchpad toggle + history button -->
+            <StackPanel Grid.Column="0" Orientation="Horizontal" Margin="0,0,2,0">
+                <ToggleButton x:Name="ScratchpadToggle"
+                              Style="{StaticResource ScratchpadToggleStyle}"
+                              Width="16"
+                              IsChecked="False"
+                              Checked="ScratchpadToggle_Checked"
+                              Unchecked="ScratchpadToggle_Unchecked"
+                              ToolTip="Toggle scratchpad popup">
+                    <TextBlock Text="≡" FontSize="10"
+                               VerticalAlignment="Center"
+                               HorizontalAlignment="Center"/>
+                </ToggleButton>
+
+                <Button x:Name="HistoryButton"
+                        Style="{StaticResource ToolbarButtonStyle}"
+                        Width="16" Margin="2,0,0,0"
+                        Click="HistoryButton_Click"
+                        ToolTip="Show command history (%LOCALAPPDATA%\&lt;exename&gt;_history)">
+                    <TextBlock Text="H" FontSize="10"
+                               VerticalAlignment="Center"
+                               HorizontalAlignment="Center"/>
+                </Button>
+            </StackPanel>
 
             <!-- Args field with placeholder overlay -->
             <Grid Grid.Column="1">
@@ -119,14 +143,15 @@
                          TextWrapping="NoWrap"
                          MaxLines="1"
                          VerticalContentAlignment="Center"
+                         FontFamily="Consolas"
                          ScrollViewer.VerticalScrollBarVisibility="Hidden"
                          TextChanged="ArgsTextBox_TextChanged"
                          GotFocus="OnEditFieldGotFocus"
                          LostFocus="OnAnyFieldLostFocus"
                          DataObject.Pasting="OnSingleLinePasting"
-                         ToolTip="Start application with these arguments"/>
+                         ToolTip="Command-line arguments for the active debug configuration"/>
                 <TextBlock IsHitTestVisible="False"
-                           Text="Args..."
+                           Text="Command-line arguments..."
                            VerticalAlignment="Center"
                            Margin="5,0,0,0"
                            Opacity="0.4"
@@ -159,14 +184,15 @@
                          TextWrapping="NoWrap"
                          MaxLines="1"
                          VerticalContentAlignment="Center"
+                         FontFamily="Consolas"
                          ScrollViewer.VerticalScrollBarVisibility="Hidden"
                          TextChanged="WorkingDirTextBox_TextChanged"
                          GotFocus="OnEditFieldGotFocus"
                          LostFocus="OnAnyFieldLostFocus"
                          DataObject.Pasting="OnSingleLinePasting"
-                         ToolTip="Working directory"/>
+                         ToolTip="Working directory for the active debug configuration"/>
                 <TextBlock IsHitTestVisible="False"
-                           Text="Working Directory..."
+                           Text="Working directory..."
                            VerticalAlignment="Center"
                            Margin="5,0,0,0"
                            Opacity="0.4"

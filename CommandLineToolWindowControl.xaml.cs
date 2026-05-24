@@ -5,8 +5,11 @@ using Microsoft.VisualStudio.Shell;
 using Microsoft.VisualStudio.Shell.Interop;
 using Microsoft.VisualStudio.VCProjectEngine;
 using System;
+using System.Collections;
+using System.Collections.Generic;
 using System.IO;
 using System.Runtime.InteropServices;
+using System.Web.Script.Serialization;
 using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Controls.Primitives;
@@ -59,7 +62,6 @@ namespace VS_LaunchArguments
 
             _dte = (DTE2)Package.GetGlobalService(typeof(DTE));
 
-            // Store as fields to prevent GC of COM event sinks
             _solutionEvents = _dte.Events.SolutionEvents;
             _solutionEvents.Opened        += OnSolutionOpened;
             _solutionEvents.BeforeClosing += OnSolutionBeforeClosing;
@@ -75,12 +77,10 @@ namespace VS_LaunchArguments
 
             Application.Current.Deactivated += OnApplicationDeactivated;
 
-            // Wire scratchpad TextChanged in code so it doesn't get tangled with other event ordering in XAML
             ScratchpadTextBox.TextChanged += OnScratchpadTextChanged;
 
             Unloaded += OnUnloaded;
 
-            // If a solution is already open when the tool window is first shown, pick up its state
             LoadScratchpadState();
             LoadFromActiveProject();
         }
@@ -89,7 +89,6 @@ namespace VS_LaunchArguments
         {
             ThreadHelper.ThrowIfNotOnUIThread();
 
-            // Drain any debounced save before we go away
             FlushPendingSave();
             if (_saveTimer != null)
             {
@@ -123,7 +122,6 @@ namespace VS_LaunchArguments
             });
         }
 
-        // Fires while _dte.Solution.FullName is still valid — flush before the path goes away
         private void OnSolutionBeforeClosing()
         {
             FlushPendingSave();
@@ -140,14 +138,6 @@ namespace VS_LaunchArguments
         }
 
         // ── Scratchpad / toggle persistence ───────────────────────────────────────
-        //
-        // State lives in a small binary file alongside the .sln:
-        //     <solutionDir>\.vs\<solutionName>\VSCmdPanel\state.dat
-        //
-        // This bypasses VS's .suo mechanism entirely, which is fragile because it
-        // requires the package to be loaded before VS reads the .suo. Our file is
-        // read/written directly by the control whenever it has a solution path —
-        // no package lifetime dependencies, no autoload required.
 
         private const byte StateFormatVersion = 1;
 
@@ -173,7 +163,7 @@ namespace VS_LaunchArguments
         {
             ThreadHelper.ThrowIfNotOnUIThread();
             var path = GetScratchpadStatePath();
-            if (path == null) return; // No solution open — leave UI as-is
+            if (path == null) return;
 
             string text = string.Empty;
             bool toggle = false;
@@ -193,10 +183,7 @@ namespace VS_LaunchArguments
                         }
                     }
                 }
-                catch
-                {
-                    // Corrupt or partial file — fall through with defaults
-                }
+                catch { }
             }
 
             _updatingFields = true;
@@ -245,7 +232,6 @@ namespace VS_LaunchArguments
             SaveScratchpadStateNow();
         }
 
-        // Force any pending debounced save to commit immediately
         private void FlushPendingSave()
         {
             if (_saveTimer != null && _saveTimer.IsEnabled)
@@ -258,6 +244,125 @@ namespace VS_LaunchArguments
         private void OnScratchpadTextChanged(object sender, TextChangedEventArgs e)
         {
             ScheduleScratchpadSave();
+        }
+
+        // ── Command-line history viewer ───────────────────────────────────────────
+
+        private void HistoryButton_Click(object sender, RoutedEventArgs e)
+        {
+            ThreadHelper.ThrowIfNotOnUIThread();
+
+            var path = GetHistoryFilePath();
+            if (path == null)
+            {
+                MessageBox.Show(
+                    "Could not determine target exe for the active startup project.",
+                    "Command History", MessageBoxButton.OK, MessageBoxImage.Information);
+                return;
+            }
+
+            if (!File.Exists(path))
+            {
+                MessageBox.Show(
+                    "No history file found at:\n\n" + path,
+                    "Command History", MessageBoxButton.OK, MessageBoxImage.Information);
+                return;
+            }
+
+            var entries = LoadHistoryFile(path);
+            if (entries.Count == 0)
+            {
+                MessageBox.Show(
+                    "History file is empty or could not be parsed:\n\n" + path,
+                    "Command History", MessageBoxButton.OK, MessageBoxImage.Information);
+                return;
+            }
+
+            string selected = null;
+            var dlg = new HistoryWindow(entries, RootGrid);
+            dlg.CommandSelected += (s, cmd) => selected = cmd;
+            dlg.ShowDialog();
+            if (selected != null)
+                ArgsTextBox.Text = selected;
+        }
+
+        // Returns %LOCALAPPDATA%\<exename>_history. The exe name comes from VCDebugSettings.Command
+        // with MSBuild macros expanded ($(TargetPath) etc), falling back to VCConfiguration.PrimaryOutput
+        // when Command is unset.
+        private string GetHistoryFilePath()
+        {
+            ThreadHelper.ThrowIfNotOnUIThread();
+            try
+            {
+                var proj = GetStartupProject();
+                if (proj == null || !IsCppProject(proj)) return null;
+
+                var cfg = GetActiveVCConfig(proj);
+                if (cfg == null) return null;
+
+                var debug = cfg.DebugSettings as VCDebugSettings;
+                string exePath = debug?.Command;
+
+                // Expand MSBuild macros (default Command is "$(TargetPath)" — must be resolved)
+                if (!string.IsNullOrEmpty(exePath) && exePath.IndexOf("$(") >= 0)
+                    exePath = cfg.Evaluate(exePath);
+
+                // Fall back to the project's primary output when Command is empty
+                if (string.IsNullOrEmpty(exePath))
+                    exePath = cfg.PrimaryOutput;
+
+                if (string.IsNullOrEmpty(exePath)) return null;
+
+                var exeName = Path.GetFileName(exePath);
+                if (string.IsNullOrEmpty(exeName)) return null;
+
+                var localAppData = Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData);
+                return Path.Combine(localAppData, exeName + "_history");
+            }
+            catch { return null; }
+        }
+
+        // Parses the history JSON. Format:
+        //   { "history": [ { "command": "...", "time": 1234567890 }, ... ], ... }
+        // Returns entries sorted by time descending (newest first).
+        private List<HistoryEntry> LoadHistoryFile(string path)
+        {
+            var result = new List<HistoryEntry>();
+            try
+            {
+                var json = File.ReadAllText(path);
+                var serializer = new JavaScriptSerializer { MaxJsonLength = int.MaxValue };
+                var root = serializer.Deserialize<Dictionary<string, object>>(json);
+
+                if (root == null || !root.TryGetValue("history", out var histObj)) return result;
+                if (!(histObj is IEnumerable historyItems)) return result;
+
+                foreach (var item in historyItems)
+                {
+                    if (!(item is Dictionary<string, object> entry)) continue;
+                    if (!entry.TryGetValue("command", out var cmdObj) || !(cmdObj is string cmd)) continue;
+                    if (string.IsNullOrEmpty(cmd)) continue;
+
+                    long time = 0;
+                    if (entry.TryGetValue("time", out var tObj))
+                    {
+                        // JavaScriptSerializer hands back int/long/decimal/double depending on size
+                        switch (tObj)
+                        {
+                            case int ti:     time = ti; break;
+                            case long tl:    time = tl; break;
+                            case decimal td: time = (long)td; break;
+                            case double tdb: time = (long)tdb; break;
+                        }
+                    }
+
+                    result.Add(new HistoryEntry { Command = cmd, Time = time });
+                }
+
+                result.Sort((a, b) => b.Time.CompareTo(a.Time));
+            }
+            catch { /* malformed file — return whatever we got */ }
+            return result;
         }
 
         // ── IVsUpdateSolutionEvents — fires on config/platform change ─────────────
@@ -427,8 +532,6 @@ namespace VS_LaunchArguments
 
         private void OnAnyFieldLostFocus(object sender, RoutedEventArgs e)
         {
-            // Defer one dispatcher pass so the incoming focus target is known before deciding to close.
-            // DispatcherPriority.Background is intentional — JoinableTaskFactory has no priority equivalent.
 #pragma warning disable VSTHRD001
             Dispatcher.BeginInvoke(DispatcherPriority.Background, new Action(() =>
             {
@@ -458,7 +561,6 @@ namespace VS_LaunchArguments
             if (!_updatingFields) SaveScratchpadStateNow();
         }
 
-        // WPF re-creates the popup HWND on every open, so WS_EX_TOPMOST must be stripped each time.
         private void ScratchpadPopup_Opened(object sender, EventArgs e)
         {
             var source = PresentationSource.FromVisual(ScratchpadTextBox) as HwndSource;
@@ -517,6 +619,14 @@ namespace VS_LaunchArguments
         private VCDebugSettings GetActiveDebugSettings(Project project)
         {
             ThreadHelper.ThrowIfNotOnUIThread();
+            return GetActiveVCConfig(project)?.DebugSettings as VCDebugSettings;
+        }
+
+        // Finds the VCConfiguration matching the project's active config/platform.
+        // Needed both for debug settings and for macro evaluation (Evaluate, PrimaryOutput).
+        private VCConfiguration GetActiveVCConfig(Project project)
+        {
+            ThreadHelper.ThrowIfNotOnUIThread();
 
             var vcproj = project.Object as VCProject;
             if (vcproj == null) return null;
@@ -535,7 +645,7 @@ namespace VS_LaunchArguments
                 var platform = (VCPlatform)cfg.Platform;
                 if (string.Equals(cfg.ConfigurationName, configName,   StringComparison.OrdinalIgnoreCase) &&
                     string.Equals(platform.Name,         platformName, StringComparison.OrdinalIgnoreCase))
-                    return (VCDebugSettings)cfg.DebugSettings;
+                    return cfg;
             }
             return null;
         }
