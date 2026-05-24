@@ -51,6 +51,37 @@
                 </Trigger>
             </Style.Triggers>
         </Style>
+
+        <!-- Delete (trashcan) button shown on hover for each history row -->
+        <Style x:Key="HistoryDeleteButtonStyle" TargetType="Button">
+            <Setter Property="Background"      Value="Transparent"/>
+            <Setter Property="BorderThickness" Value="0"/>
+            <Setter Property="Padding"         Value="3"/>
+            <Setter Property="Focusable"       Value="False"/>
+            <Setter Property="Cursor"          Value="Hand"/>
+            <Setter Property="Visibility"      Value="Hidden"/>
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="Button">
+                        <Border Background="{TemplateBinding Background}"
+                                Padding="{TemplateBinding Padding}">
+                            <ContentPresenter HorizontalAlignment="Center"
+                                              VerticalAlignment="Center"/>
+                        </Border>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+            <Style.Triggers>
+                <!-- Reveal when the row is hovered -->
+                <DataTrigger Binding="{Binding IsMouseOver, RelativeSource={RelativeSource AncestorType={x:Type ListBoxItem}}}" Value="True">
+                    <Setter Property="Visibility" Value="Visible"/>
+                </DataTrigger>
+                <!-- Subtle hover background on the button itself -->
+                <Trigger Property="IsMouseOver" Value="True">
+                    <Setter Property="Background" Value="{DynamicResource {x:Static vsui:EnvironmentColors.CommandBarHoverBrushKey}}"/>
+                </Trigger>
+            </Style.Triggers>
+        </Style>
     </UserControl.Resources>
 
     <Grid x:Name="RootGrid" SizeChanged="RootGrid_SizeChanged">
@@ -97,38 +128,70 @@
                PlacementTarget="{Binding ElementName=RootGrid}"
                Placement="Top"
                StaysOpen="True">
-            <Border BorderThickness="1"
+            <Border x:Name="HistoryPopupContent"
+                    BorderThickness="1"
                     BorderBrush="{DynamicResource {x:Static vsui:EnvironmentColors.ComboBoxBorderBrushKey}}"
                     Background="{DynamicResource {x:Static vsui:EnvironmentColors.ComboBoxBackgroundBrushKey}}">
-                <ListBox x:Name="HistoryListBox"
-                         MaxHeight="400"
-                         BorderThickness="0"
-                         Background="Transparent"
-                         Foreground="{DynamicResource {x:Static vsui:EnvironmentColors.ComboBoxTextBrushKey}}"
-                         HorizontalContentAlignment="Stretch"
-                         ScrollViewer.HorizontalScrollBarVisibility="Disabled"
-                         PreviewKeyDown="HistoryListBox_KeyDown"
-                         MouseDoubleClick="HistoryListBox_MouseDoubleClick">
-                    <ListBox.ItemTemplate>
-                        <DataTemplate>
-                            <Grid Margin="2,1">
-                                <Grid.ColumnDefinitions>
-                                    <ColumnDefinition Width="*"/>
-                                    <ColumnDefinition Width="Auto"/>
-                                </Grid.ColumnDefinitions>
-                                <TextBlock Grid.Column="0"
-                                           Text="{Binding Command}"
-                                           FontFamily="Consolas"
-                                           TextTrimming="None"/>
-                                <TextBlock Grid.Column="1"
-                                           Text="{Binding TimeText}"
-                                           Margin="20,0,4,0"
-                                           Opacity="0.55"
-                                           FontStyle="Italic"/>
-                            </Grid>
-                        </DataTemplate>
-                    </ListBox.ItemTemplate>
-                </ListBox>
+                <Grid>
+                    <Grid.RowDefinitions>
+                        <RowDefinition Height="Auto"/>
+                        <RowDefinition Height="*"/>
+                    </Grid.RowDefinitions>
+
+                    <!-- Header bar — shows exe name -->
+                    <Border Grid.Row="0"
+                            BorderThickness="0,0,0,1"
+                            BorderBrush="{DynamicResource {x:Static vsui:EnvironmentColors.ComboBoxBorderBrushKey}}"
+                            Padding="6,3">
+                        <TextBlock x:Name="HistoryHeaderText"
+                                   Text="Command history"
+                                   FontWeight="SemiBold"
+                                   Foreground="{DynamicResource {x:Static vsui:EnvironmentColors.ToolWindowTextBrushKey}}"/>
+                    </Border>
+
+                    <ListBox Grid.Row="1"
+                             x:Name="HistoryListBox"
+                             MaxHeight="400"
+                             BorderThickness="0"
+                             Background="Transparent"
+                             Foreground="{DynamicResource {x:Static vsui:EnvironmentColors.ComboBoxTextBrushKey}}"
+                             HorizontalContentAlignment="Stretch"
+                             ScrollViewer.HorizontalScrollBarVisibility="Disabled"
+                             PreviewKeyDown="HistoryListBox_KeyDown"
+                             MouseDoubleClick="HistoryListBox_MouseDoubleClick">
+                        <ListBox.ItemTemplate>
+                            <DataTemplate>
+                                <Grid Margin="2,1">
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="*"/>
+                                        <ColumnDefinition Width="Auto"/>
+                                        <ColumnDefinition Width="Auto"/>
+                                    </Grid.ColumnDefinitions>
+                                    <TextBlock Grid.Column="0"
+                                               Text="{Binding Command}"
+                                               FontFamily="Consolas"
+                                               TextTrimming="None"
+                                               VerticalAlignment="Center"/>
+                                    <TextBlock Grid.Column="1"
+                                               Text="{Binding TimeText}"
+                                               Margin="20,0,4,0"
+                                               Opacity="0.55"
+                                               FontStyle="Italic"
+                                               VerticalAlignment="Center"/>
+                                    <Button Grid.Column="2"
+                                            Style="{StaticResource HistoryDeleteButtonStyle}"
+                                            Click="DeleteHistoryItem_Click"
+                                            ToolTip="Remove from history">
+                                        <TextBlock Text="&#xE74D;"
+                                                   FontFamily="Segoe MDL2 Assets"
+                                                   FontSize="12"
+                                                   Opacity="0.7"/>
+                                    </Button>
+                                </Grid>
+                            </DataTemplate>
+                        </ListBox.ItemTemplate>
+                    </ListBox>
+                </Grid>
             </Border>
         </Popup>
 
@@ -150,9 +213,9 @@
                               Checked="ScratchpadToggle_Checked"
                               Unchecked="ScratchpadToggle_Unchecked"
                               ToolTip="Toggle scratchpad popup">
-                    <TextBlock Text="≡" FontSize="10"
+                    <TextBlock Text="🗎" FontSize="16"
                                VerticalAlignment="Center"
-                               HorizontalAlignment="Center"/>
+                               HorizontalAlignment="Center" Foreground="{DynamicResource {x:Static SystemColors.ControlBrushKey}}"/>
                 </ToggleButton>
 
                 <Button x:Name="HistoryButton"
@@ -160,9 +223,9 @@
                         Width="16" Margin="2,0,0,0"
                         Click="HistoryButton_Click"
                         ToolTip="Show command history (%LOCALAPPDATA%\&lt;exename&gt;_history)">
-                    <TextBlock Text="H" FontSize="10"
+                    <TextBlock Text="↺" FontSize="16"
                                VerticalAlignment="Center"
-                               HorizontalAlignment="Center"/>
+                               HorizontalAlignment="Center" Foreground="{DynamicResource {x:Static SystemColors.ControlBrushKey}}"/>
                 </Button>
             </StackPanel>
 

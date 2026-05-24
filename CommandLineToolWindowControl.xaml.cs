@@ -56,6 +56,10 @@ namespace VS_LaunchArguments
 
         private DispatcherTimer _saveTimer;
 
+        // Tracks whether we're subscribed to the root visual's PreviewMouseDown
+        // for history popup click-outside-to-close detection.
+        private bool _historyOutsideSubscribed;
+
         // ── P/Invoke — strip WS_EX_TOPMOST from the scratchpad popup HWND ─────────
 
         private static readonly IntPtr HWND_NOTOPMOST = new IntPtr(-2);
@@ -267,8 +271,6 @@ namespace VS_LaunchArguments
         // any click outside the popup (or the H button itself) closes it.  The H button
         // is excluded from "outside" so clicking it while open goes through the toggle
         // path in HistoryButton_Click instead of the outside-click path.
-        private bool _historyOutsideSubscribed;
-
         private void SubscribeHistoryOutsideClick()
         {
             if (_historyOutsideSubscribed) return;
@@ -290,7 +292,7 @@ namespace VS_LaunchArguments
 
         private void OnHistoryOutsideMouseDown(object sender, MouseButtonEventArgs e)
         {
-            if (!HistoryListBox.IsMouseOver && !HistoryButton.IsMouseOver)
+            if (!HistoryPopupContent.IsMouseOver && !HistoryButton.IsMouseOver)
                 CloseHistoryPopup();
         }
 
@@ -310,7 +312,7 @@ namespace VS_LaunchArguments
                 return;
             }
 
-            var path = GetHistoryFilePath();
+            var path = GetHistoryFilePath(out var exeName);
             if (path == null)
             {
                 MessageBox.Show("Could not determine target exe for the active startup project.",
@@ -333,6 +335,7 @@ namespace VS_LaunchArguments
                 return;
             }
 
+            HistoryHeaderText.Text       = "Command history — " + exeName;
             HistoryListBox.ItemsSource   = entries;
             HistoryListBox.SelectedIndex = 0;
             HistoryPopup.Width           = MeasureHistoryPopupWidth(entries);
@@ -369,12 +372,92 @@ namespace VS_LaunchArguments
             CloseHistoryPopup();
         }
 
+        // Click on the per-row trashcan. Removes the entry from the JSON file and
+        // refreshes the displayed list.  Marked Handled so the click doesn't also
+        // select/commit the row underneath.
+        private void DeleteHistoryItem_Click(object sender, RoutedEventArgs e)
+        {
+            ThreadHelper.ThrowIfNotOnUIThread();
+
+            var entry = (sender as FrameworkElement)?.DataContext as HistoryEntry;
+            if (entry == null) { e.Handled = true; return; }
+
+            var path = GetHistoryFilePath(out _);
+            if (path == null || !File.Exists(path)) { e.Handled = true; return; }
+
+            if (DeleteHistoryEntry(path, entry))
+            {
+                if (HistoryListBox.ItemsSource is List<HistoryEntry> list)
+                {
+                    list.Remove(entry);
+                    HistoryListBox.Items.Refresh();
+                    if (list.Count == 0)
+                        CloseHistoryPopup();
+                }
+            }
+            e.Handled = true;
+        }
+
+        // Reads the history file, removes the first entry matching target's (command, time),
+        // and writes it back. Preserves all other top-level keys (e.g. colorScheme) and
+        // all other history entries unchanged. Returns true if an entry was removed.
+        private bool DeleteHistoryEntry(string path, HistoryEntry target)
+        {
+            try
+            {
+                var json       = File.ReadAllText(path);
+                var serializer = new JavaScriptSerializer { MaxJsonLength = int.MaxValue };
+                var root       = serializer.Deserialize<Dictionary<string, object>>(json);
+
+                if (root == null) return false;
+                if (!root.TryGetValue("history", out var histObj)) return false;
+                if (!(histObj is IEnumerable historyItems)) return false;
+
+                var newHistory = new List<object>();
+                bool removed = false;
+
+                foreach (var item in historyItems)
+                {
+                    if (!removed && item is Dictionary<string, object> entry)
+                    {
+                        string cmd = entry.TryGetValue("command", out var c) ? c as string : null;
+                        long time = 0;
+                        if (entry.TryGetValue("time", out var t))
+                        {
+                            switch (t)
+                            {
+                                case int ti:     time = ti;       break;
+                                case long tl:    time = tl;       break;
+                                case decimal td: time = (long)td; break;
+                                case double tdb: time = (long)tdb;break;
+                            }
+                        }
+
+                        if (cmd == target.Command && time == target.Time)
+                        {
+                            removed = true;
+                            continue;
+                        }
+                    }
+                    newHistory.Add(item);
+                }
+
+                if (!removed) return false;
+
+                root["history"] = newHistory;
+                File.WriteAllText(path, serializer.Serialize(root));
+                return true;
+            }
+            catch { return false; }
+        }
+
         // Measures the longest command string at the current font to set popup width.
         private double MeasureHistoryPopupWidth(IList<HistoryEntry> entries)
         {
             const double minWidth   = 400;
             const double maxWidth   = 1200;
             const double timestampW = 150; // "yyyy-MM-dd HH:mm" + italic margin
+            const double deleteW    = 24;  // trashcan button column
             const double chrome     = 32;  // borders + scrollbar + item padding
 
             string longest = string.Empty;
@@ -396,7 +479,7 @@ namespace VS_LaunchArguments
                     Brushes.Black,
                     VisualTreeHelper.GetDpi(this).PixelsPerDip);
 
-                return Math.Max(minWidth, Math.Min(maxWidth, ft.Width + timestampW + chrome));
+                return Math.Max(minWidth, Math.Min(maxWidth, ft.Width + timestampW + deleteW + chrome));
             }
             catch
             {
@@ -406,8 +489,9 @@ namespace VS_LaunchArguments
 
         // Returns %LOCALAPPDATA%\<exename>_history. Expands MSBuild macros in
         // VCDebugSettings.Command (typically $(TargetPath)), falls back to PrimaryOutput.
-        private string GetHistoryFilePath()
+        private string GetHistoryFilePath(out string exeName)
         {
+            exeName = null;
             ThreadHelper.ThrowIfNotOnUIThread();
             try
             {
@@ -428,11 +512,12 @@ namespace VS_LaunchArguments
 
                 if (string.IsNullOrEmpty(exePath)) return null;
 
-                var exeName = Path.GetFileName(exePath);
-                if (string.IsNullOrEmpty(exeName)) return null;
+                var name = Path.GetFileName(exePath);
+                if (string.IsNullOrEmpty(name)) return null;
 
+                exeName = name;
                 var localAppData = Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData);
-                return Path.Combine(localAppData, exeName + "_history");
+                return Path.Combine(localAppData, name + "_history");
             }
             catch { return null; }
         }
