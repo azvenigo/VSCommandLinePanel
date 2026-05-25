@@ -1,7 +1,7 @@
 ﻿<?xml version="1.0" encoding="utf-8"?>
 <PackageManifest Version="2.0.0" xmlns="http://schemas.microsoft.com/developer/vsx-schema/2011" xmlns:d="http://schemas.microsoft.com/developer/vsx-schema-design/2011">
     <Metadata>
-        <Identity Id="VS_CommandLine_Panel.23ab6d1b-62a8-62b0-ae6e-1335f8a0bb0a" Version="3.0" Language="en-US" Publisher="Alex Zvenigorodsky" />
+        <Identity Id="VS_CommandLine_Panel.23ab6d1b-62a8-62b0-ae6e-1335f8a0bb0a" Version="3.1" Language="en-US" Publisher="Alex Zvenigorodsky" />
         <DisplayName>VS_CommandLine_Panel</DisplayName>
         <Description xml:space="preserve">Visual Studio Command Line Editing Panel
 Includes a scratchpad that persists with the solution.
