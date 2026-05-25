@@ -91,11 +91,13 @@
                PlacementTarget="{Binding ElementName=RootGrid}"
                Placement="Top"
                VerticalOffset="-30"
+               AllowsTransparency="True"
                StaysOpen="True"
                Opened="ScratchpadPopup_Opened">
             <Border BorderThickness="1"
-                    BorderBrush="{DynamicResource {x:Static vsui:EnvironmentColors.ComboBoxBorderBrushKey}}"
-                    Background="{DynamicResource {x:Static vsui:EnvironmentColors.ToolWindowBackgroundBrushKey}}">
+                    CornerRadius="4"
+                    BorderBrush="{DynamicResource {x:Static vsui:EnvironmentColors.CommandBarBorderBrushKey}}"
+                    Background="{DynamicResource {x:Static vsui:EnvironmentColors.ComboBoxBorderBrushKey}}">
                 <Grid>
                     <Grid.RowDefinitions>
                         <RowDefinition Height="Auto"/>
@@ -104,6 +106,7 @@
                     <Border Grid.Row="0"
                             BorderThickness="0,0,0,1"
                             BorderBrush="{DynamicResource {x:Static vsui:EnvironmentColors.ComboBoxBorderBrushKey}}"
+                            Background="{DynamicResource {x:Static vsui:EnvironmentColors.CommandBarGradientBeginBrushKey}}"
                             Padding="6,3">
                         <TextBlock Text="Scratchpad"
                                    FontWeight="SemiBold"
@@ -127,11 +130,13 @@
         <Popup x:Name="HistoryPopup"
                PlacementTarget="{Binding ElementName=RootGrid}"
                Placement="Top"
+               AllowsTransparency="True"
                StaysOpen="True">
             <Border x:Name="HistoryPopupContent"
                     BorderThickness="1"
-                    BorderBrush="{DynamicResource {x:Static vsui:EnvironmentColors.ComboBoxBorderBrushKey}}"
-                    Background="{DynamicResource {x:Static vsui:EnvironmentColors.ComboBoxBackgroundBrushKey}}">
+                    CornerRadius="4"
+                    BorderBrush="{DynamicResource {x:Static vsui:EnvironmentColors.CommandBarBorderBrushKey}}"
+                    Background="{DynamicResource {x:Static vsui:EnvironmentColors.AccentBorderBrushKey}}">
                 <Grid>
                     <Grid.RowDefinitions>
                         <RowDefinition Height="Auto"/>
@@ -140,8 +145,9 @@
 
                     <!-- Header bar — shows exe name -->
                     <Border Grid.Row="0"
-                            BorderThickness="0,0,0,1"
+                            BorderThickness="2"
                             BorderBrush="{DynamicResource {x:Static vsui:EnvironmentColors.ComboBoxBorderBrushKey}}"
+                            Background="{DynamicResource {x:Static vsui:EnvironmentColors.CommandBarGradientBeginBrushKey}}"
                             Padding="6,3">
                         <TextBlock x:Name="HistoryHeaderText"
                                    Text="Command history"
@@ -158,7 +164,7 @@
                              HorizontalContentAlignment="Stretch"
                              ScrollViewer.HorizontalScrollBarVisibility="Disabled"
                              PreviewKeyDown="HistoryListBox_KeyDown"
-                             MouseDoubleClick="HistoryListBox_MouseDoubleClick">
+                             SelectionChanged="HistoryListBox_SelectionChanged">
                         <ListBox.ItemTemplate>
                             <DataTemplate>
                                 <Grid Margin="2,1">
@@ -184,6 +190,7 @@
                                             ToolTip="Remove from history">
                                         <TextBlock Text="&#xE74D;"
                                                    FontFamily="Segoe MDL2 Assets"
+                                                   Foreground="{DynamicResource {x:Static vsui:EnvironmentColors.ToolWindowTextBrushKey}}"
                                                    FontSize="12"
                                                    Opacity="0.7"/>
                                     </Button>
@@ -215,7 +222,8 @@
                               ToolTip="Toggle scratchpad popup">
                     <TextBlock Text="🗎" FontSize="16"
                                VerticalAlignment="Center"
-                               HorizontalAlignment="Center" Foreground="{DynamicResource {x:Static SystemColors.ControlBrushKey}}"/>
+                               HorizontalAlignment="Center" 
+                               Foreground="{DynamicResource {x:Static SystemColors.ControlBrushKey}}"/>
                 </ToggleButton>
 
                 <Button x:Name="HistoryButton"

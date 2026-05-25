@@ -29,7 +29,7 @@ namespace VS_LaunchArguments
     public class HistoryEntry
     {
         public string Command { get; set; }
-        public long Time { get; set; }
+        public long   Time    { get; set; }
 
         public string TimeText =>
             Time > 0
@@ -66,8 +66,8 @@ namespace VS_LaunchArguments
         // ── P/Invoke — strip WS_EX_TOPMOST from the scratchpad popup HWND ─────────
 
         private static readonly IntPtr HWND_NOTOPMOST = new IntPtr(-2);
-        private const uint SWP_NOMOVE = 0x0002;
-        private const uint SWP_NOSIZE = 0x0001;
+        private const uint SWP_NOMOVE     = 0x0002;
+        private const uint SWP_NOSIZE     = 0x0001;
         private const uint SWP_NOACTIVATE = 0x0010;
 
         [DllImport("user32.dll", SetLastError = false)]
@@ -84,9 +84,9 @@ namespace VS_LaunchArguments
             _dte = (DTE2)Package.GetGlobalService(typeof(DTE));
 
             _solutionEvents = _dte.Events.SolutionEvents;
-            _solutionEvents.Opened += OnSolutionOpened;
+            _solutionEvents.Opened        += OnSolutionOpened;
             _solutionEvents.BeforeClosing += OnSolutionBeforeClosing;
-            _solutionEvents.AfterClosing += OnSolutionClosed;
+            _solutionEvents.AfterClosing  += OnSolutionClosed;
 
             _buildManager = Package.GetGlobalService(typeof(SVsSolutionBuildManager)) as IVsSolutionBuildManager2;
             if (_buildManager != null)
@@ -162,14 +162,14 @@ namespace VS_LaunchArguments
         private void OnSolutionClosed()
         {
             _updatingFields = true;
-            ArgsTextBox.Text = string.Empty;
-            WorkingDirTextBox.Text = string.Empty;
-            ScratchpadTextBox.Text = string.Empty;
+            ArgsTextBox.Text           = string.Empty;
+            WorkingDirTextBox.Text     = string.Empty;
+            ScratchpadTextBox.Text     = string.Empty;
             ScratchpadToggle.IsChecked = false;
             _updatingFields = false;
             ScratchpadToggle.IsEnabled = false;
-            HistoryButton.IsEnabled = false;
-            ScratchpadPopup.IsOpen = false;
+            HistoryButton.IsEnabled    = false;
+            ScratchpadPopup.IsOpen     = false;
             CloseHistoryPopup();
         }
 
@@ -177,9 +177,9 @@ namespace VS_LaunchArguments
         private void UpdateControlsEnabled()
         {
             ThreadHelper.ThrowIfNotOnUIThread();
-            bool hasProject = GetStartupProject() != null;
+            bool hasProject            = GetStartupProject() != null;
             ScratchpadToggle.IsEnabled = hasProject;
-            HistoryButton.IsEnabled = hasProject;
+            HistoryButton.IsEnabled    = hasProject;
             if (!hasProject)
             {
                 ScratchpadPopup.IsOpen = false;
@@ -229,7 +229,7 @@ namespace VS_LaunchArguments
                         if (version == StateFormatVersion)
                         {
                             toggle = reader.ReadBoolean();
-                            text = reader.ReadString();
+                            text   = reader.ReadString();
                         }
                     }
                 }
@@ -237,7 +237,7 @@ namespace VS_LaunchArguments
             }
 
             _updatingFields = true;
-            ScratchpadTextBox.Text = text;
+            ScratchpadTextBox.Text     = text;
             ScratchpadToggle.IsChecked = toggle;
             _updatingFields = false;
         }
@@ -350,11 +350,11 @@ namespace VS_LaunchArguments
             var entries = LoadHistoryFile(path);
             if (entries.Count == 0) return;
 
-            HistoryHeaderText.Text = "Command history — " + exeName;
-            HistoryListBox.ItemsSource = entries;
+            HistoryHeaderText.Text       = "Command history — " + exeName;
+            HistoryListBox.ItemsSource   = entries;
             HistoryListBox.SelectedIndex = entries.Count - 1;
-            HistoryPopup.Width = MeasureHistoryPopupWidth(entries);
-            HistoryPopup.IsOpen = true;
+            HistoryPopup.Width           = MeasureHistoryPopupWidth(entries);
+            HistoryPopup.IsOpen          = true;
             SubscribeHistoryOutsideClick();
             // Scroll to newest (bottom) after layout pass
             Dispatcher.BeginInvoke(new Action(() =>
@@ -377,8 +377,10 @@ namespace VS_LaunchArguments
             }
         }
 
-        private void HistoryListBox_MouseDoubleClick(object sender, MouseButtonEventArgs e)
+        private void HistoryListBox_SelectionChanged(object sender, SelectionChangedEventArgs e)
         {
+            // Ignore the programmatic selection set when the popup first opens
+            if (!HistoryPopup.IsOpen) return;
             CommitHistorySelection();
         }
 
@@ -423,9 +425,9 @@ namespace VS_LaunchArguments
         {
             try
             {
-                var json = File.ReadAllText(path);
+                var json       = File.ReadAllText(path);
                 var serializer = new JavaScriptSerializer { MaxJsonLength = int.MaxValue };
-                var root = serializer.Deserialize<Dictionary<string, object>>(json);
+                var root       = serializer.Deserialize<Dictionary<string, object>>(json);
 
                 if (root == null) return false;
                 if (!root.TryGetValue("history", out var histObj)) return false;
@@ -444,10 +446,10 @@ namespace VS_LaunchArguments
                         {
                             switch (t)
                             {
-                                case int ti: time = ti; break;
-                                case long tl: time = tl; break;
+                                case int ti:     time = ti;       break;
+                                case long tl:    time = tl;       break;
                                 case decimal td: time = (long)td; break;
-                                case double tdb: time = (long)tdb; break;
+                                case double tdb: time = (long)tdb;break;
                             }
                         }
 
@@ -472,11 +474,11 @@ namespace VS_LaunchArguments
         // Measures the longest command string at the current font to set popup width.
         private double MeasureHistoryPopupWidth(IList<HistoryEntry> entries)
         {
-            const double minWidth = 400;
-            const double maxWidth = 1200;
+            const double minWidth   = 400;
+            const double maxWidth   = 1200;
             const double timestampW = 150; // "yyyy-MM-dd HH:mm" + italic margin
-            const double deleteW = 24;  // trashcan button column
-            const double chrome = 32;  // borders + scrollbar + item padding
+            const double deleteW    = 24;  // trashcan button column
+            const double chrome     = 32;  // borders + scrollbar + item padding
 
             string longest = string.Empty;
             foreach (var entry in entries)
@@ -547,9 +549,9 @@ namespace VS_LaunchArguments
             var result = new List<HistoryEntry>();
             try
             {
-                var json = File.ReadAllText(path);
+                var json       = File.ReadAllText(path);
                 var serializer = new JavaScriptSerializer { MaxJsonLength = int.MaxValue };
-                var root = serializer.Deserialize<Dictionary<string, object>>(json);
+                var root       = serializer.Deserialize<Dictionary<string, object>>(json);
 
                 if (root == null || !root.TryGetValue("history", out var histObj)) return result;
                 if (!(histObj is IEnumerable historyItems)) return result;
@@ -565,8 +567,8 @@ namespace VS_LaunchArguments
                     {
                         switch (tObj)
                         {
-                            case int ti: time = ti; break;
-                            case long tl: time = tl; break;
+                            case int ti:     time = ti;      break;
+                            case long tl:    time = tl;      break;
                             case decimal td: time = (long)td; break;
                             case double tdb: time = (long)tdb; break;
                         }
@@ -591,10 +593,10 @@ namespace VS_LaunchArguments
             return VSConstants.S_OK;
         }
 
-        int IVsUpdateSolutionEvents.UpdateSolution_Begin(ref int pfCancelUpdate) => VSConstants.S_OK;
+        int IVsUpdateSolutionEvents.UpdateSolution_Begin(ref int pfCancelUpdate)                           => VSConstants.S_OK;
         int IVsUpdateSolutionEvents.UpdateSolution_Done(int fSucceeded, int fModified, int fCancelCommand) => VSConstants.S_OK;
-        int IVsUpdateSolutionEvents.UpdateSolution_StartUpdate(ref int pfCancelUpdate) => VSConstants.S_OK;
-        int IVsUpdateSolutionEvents.UpdateSolution_Cancel() => VSConstants.S_OK;
+        int IVsUpdateSolutionEvents.UpdateSolution_StartUpdate(ref int pfCancelUpdate)                     => VSConstants.S_OK;
+        int IVsUpdateSolutionEvents.UpdateSolution_Cancel()                                                => VSConstants.S_OK;
 
         // ── IVsSelectionEvents ────────────────────────────────────────────────────
 
@@ -674,7 +676,7 @@ namespace VS_LaunchArguments
                 history.Add(new Dictionary<string, object>
                 {
                     ["command"] = args,
-                    ["time"] = DateTimeOffset.UtcNow.ToUnixTimeSeconds()
+                    ["time"]    = DateTimeOffset.UtcNow.ToUnixTimeSeconds()
                 });
 
                 // Cap at 100 — drop oldest from the front
@@ -699,11 +701,11 @@ namespace VS_LaunchArguments
                 if (proj == null || !IsCppProject(proj)) return;
 
                 string args = GetDebugProperty(proj, DebugProperty.CommandArguments);
-                string wd = GetDebugProperty(proj, DebugProperty.WorkingDirectory);
+                string wd   = GetDebugProperty(proj, DebugProperty.WorkingDirectory);
 
                 _updatingFields = true;
-                if (!string.IsNullOrEmpty(args)) ArgsTextBox.Text = args;
-                if (!string.IsNullOrEmpty(wd)) WorkingDirTextBox.Text = wd;
+                if (!string.IsNullOrEmpty(args)) ArgsTextBox.Text       = args;
+                if (!string.IsNullOrEmpty(wd))   WorkingDirTextBox.Text = wd;
                 _updatingFields = false;
             }
             catch { _updatingFields = false; }
@@ -718,7 +720,7 @@ namespace VS_LaunchArguments
                 if (proj == null || !IsCppProject(proj)) return;
 
                 ApplyOrSeed(proj, DebugProperty.CommandArguments, ArgsTextBox);
-                ApplyOrSeed(proj, DebugProperty.WorkingDirectory, WorkingDirTextBox);
+                ApplyOrSeed(proj, DebugProperty.WorkingDirectory,  WorkingDirTextBox);
             }
             catch { }
         }
@@ -751,12 +753,12 @@ namespace VS_LaunchArguments
                 if (proj == null || !IsCppProject(proj)) return;
 
                 string projArgs = GetDebugProperty(proj, DebugProperty.CommandArguments);
-                string projWd = GetDebugProperty(proj, DebugProperty.WorkingDirectory);
+                string projWd   = GetDebugProperty(proj, DebugProperty.WorkingDirectory);
 
                 _updatingFields = true;
                 if (projArgs != null && projArgs != ArgsTextBox.Text)
                     ArgsTextBox.Text = projArgs;
-                if (projWd != null && projWd != WorkingDirTextBox.Text)
+                if (projWd   != null && projWd   != WorkingDirTextBox.Text)
                     WorkingDirTextBox.Text = projWd;
                 _updatingFields = false;
             }
@@ -806,7 +808,7 @@ namespace VS_LaunchArguments
 
         private void ScratchpadToggle_Checked(object sender, RoutedEventArgs e)
         {
-            ScratchpadPopup.Width = RootGrid.ActualWidth;
+            ScratchpadPopup.Width  = RootGrid.ActualWidth;
             ScratchpadPopup.IsOpen = true;
             if (!_updatingFields) SaveScratchpadStateNow();
         }
@@ -888,14 +890,14 @@ namespace VS_LaunchArguments
             var activeCfg = cfgMgr.ActiveConfiguration;
             if (activeCfg == null) return null;
 
-            string configName = activeCfg.ConfigurationName;
+            string configName   = activeCfg.ConfigurationName;
             string platformName = activeCfg.PlatformName;
 
             foreach (VCConfiguration cfg in (IVCCollection)vcproj.Configurations)
             {
                 var platform = (VCPlatform)cfg.Platform;
-                if (string.Equals(cfg.ConfigurationName, configName, StringComparison.OrdinalIgnoreCase) &&
-                    string.Equals(platform.Name, platformName, StringComparison.OrdinalIgnoreCase))
+                if (string.Equals(cfg.ConfigurationName, configName,   StringComparison.OrdinalIgnoreCase) &&
+                    string.Equals(platform.Name,         platformName, StringComparison.OrdinalIgnoreCase))
                     return cfg;
             }
             return null;
