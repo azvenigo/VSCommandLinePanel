@@ -5,45 +5,69 @@ using Microsoft.VisualStudio.Shell;
 using Microsoft.VisualStudio.Shell.Interop;
 using Microsoft.VisualStudio.VCProjectEngine;
 using System;
+using System.Collections;
+using System.Collections.Generic;
+using System.Globalization;
 using System.IO;
 using System.Runtime.InteropServices;
+using System.Web.Script.Serialization;
 using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Controls.Primitives;
+using System.Windows.Input;
 using System.Windows.Interop;
+using System.Windows.Media;
 using System.Windows.Threading;
 
 #pragma warning disable VSSDK007, VSTHRD110
 
 namespace VS_LaunchArguments
 {
-    public partial class CommandLineToolWindowControl : UserControl, IVsUpdateSolutionEvents, IVsSelectionEvents
+    // ── History data ──────────────────────────────────────────────────────────────
+    // Moved here from HistoryWindow.xaml.cs (that file can now be removed from the project).
+
+    public class HistoryEntry
     {
-        // Value 3 from __VSSELELEMID; using the literal avoids a type-availability issue in some SDK versions
+        public string Command { get; set; }
+        public long Time { get; set; }
+
+        public string TimeText =>
+            Time > 0
+                ? DateTimeOffset.FromUnixTimeSeconds(Time).LocalDateTime.ToString("yyyy-MM-dd HH:mm")
+                : string.Empty;
+    }
+
+    // ── Control ───────────────────────────────────────────────────────────────────
+
+    public partial class CommandLineToolWindowControl : UserControl, IVsUpdateSolutionEvents, IVsSelectionEvents, IVsDebuggerEvents
+    {
         private const uint SEID_StartupProject = 3;
 
         private DTE2 _dte;
         private bool _updatingFields;
 
-        // Held as fields — COM event sinks are GC'd if referenced only from locals
         private SolutionEvents _solutionEvents;
 
-        // Fires OnActiveProjectCfgChange when config/platform changes
         private IVsSolutionBuildManager2 _buildManager;
         private uint _buildManagerCookie;
 
-        // Fires OnElementValueChanged(SEID_StartupProject) when startup project changes
         private IVsMonitorSelection _monitorSelection;
         private uint _selectionCookie;
 
-        // Debounce timer for scratchpad/toggle file persistence
+        private IVsDebugger _debugger;
+        private uint _debuggerCookie;
+
         private DispatcherTimer _saveTimer;
 
-        // ── P/Invoke — strip WS_EX_TOPMOST from the popup HWND ───────────────────
+        // Tracks whether we're subscribed to the root visual's PreviewMouseDown
+        // for history popup click-outside-to-close detection.
+        private bool _historyOutsideSubscribed;
+
+        // ── P/Invoke — strip WS_EX_TOPMOST from the scratchpad popup HWND ─────────
 
         private static readonly IntPtr HWND_NOTOPMOST = new IntPtr(-2);
-        private const uint SWP_NOMOVE     = 0x0002;
-        private const uint SWP_NOSIZE     = 0x0001;
+        private const uint SWP_NOMOVE = 0x0002;
+        private const uint SWP_NOSIZE = 0x0001;
         private const uint SWP_NOACTIVATE = 0x0010;
 
         [DllImport("user32.dll", SetLastError = false)]
@@ -59,11 +83,10 @@ namespace VS_LaunchArguments
 
             _dte = (DTE2)Package.GetGlobalService(typeof(DTE));
 
-            // Store as fields to prevent GC of COM event sinks
             _solutionEvents = _dte.Events.SolutionEvents;
-            _solutionEvents.Opened        += OnSolutionOpened;
+            _solutionEvents.Opened += OnSolutionOpened;
             _solutionEvents.BeforeClosing += OnSolutionBeforeClosing;
-            _solutionEvents.AfterClosing  += OnSolutionClosed;
+            _solutionEvents.AfterClosing += OnSolutionClosed;
 
             _buildManager = Package.GetGlobalService(typeof(SVsSolutionBuildManager)) as IVsSolutionBuildManager2;
             if (_buildManager != null)
@@ -73,23 +96,25 @@ namespace VS_LaunchArguments
             if (_monitorSelection != null)
                 _monitorSelection.AdviseSelectionEvents(this, out _selectionCookie);
 
+            _debugger = Package.GetGlobalService(typeof(SVsShellDebugger)) as IVsDebugger;
+            if (_debugger != null)
+                _debugger.AdviseDebuggerEvents(this, out _debuggerCookie);
+
             Application.Current.Deactivated += OnApplicationDeactivated;
 
-            // Wire scratchpad TextChanged in code so it doesn't get tangled with other event ordering in XAML
             ScratchpadTextBox.TextChanged += OnScratchpadTextChanged;
 
             Unloaded += OnUnloaded;
 
-            // If a solution is already open when the tool window is first shown, pick up its state
             LoadScratchpadState();
             LoadFromActiveProject();
+            UpdateControlsEnabled();
         }
 
         private void OnUnloaded(object sender, RoutedEventArgs e)
         {
             ThreadHelper.ThrowIfNotOnUIThread();
 
-            // Drain any debounced save before we go away
             FlushPendingSave();
             if (_saveTimer != null)
             {
@@ -109,6 +134,11 @@ namespace VS_LaunchArguments
                 _monitorSelection.UnadviseSelectionEvents(_selectionCookie);
                 _selectionCookie = 0;
             }
+            if (_debuggerCookie != 0 && _debugger != null)
+            {
+                _debugger.UnadviseDebuggerEvents(_debuggerCookie);
+                _debuggerCookie = 0;
+            }
         }
 
         // ── Solution events ───────────────────────────────────────────────────────
@@ -120,10 +150,10 @@ namespace VS_LaunchArguments
                 await ThreadHelper.JoinableTaskFactory.SwitchToMainThreadAsync();
                 LoadScratchpadState();
                 LoadFromActiveProject();
+                UpdateControlsEnabled();
             });
         }
 
-        // Fires while _dte.Solution.FullName is still valid — flush before the path goes away
         private void OnSolutionBeforeClosing()
         {
             FlushPendingSave();
@@ -132,22 +162,32 @@ namespace VS_LaunchArguments
         private void OnSolutionClosed()
         {
             _updatingFields = true;
-            ArgsTextBox.Text           = string.Empty;
-            WorkingDirTextBox.Text     = string.Empty;
-            ScratchpadTextBox.Text     = string.Empty;
+            ArgsTextBox.Text = string.Empty;
+            WorkingDirTextBox.Text = string.Empty;
+            ScratchpadTextBox.Text = string.Empty;
             ScratchpadToggle.IsChecked = false;
             _updatingFields = false;
+            ScratchpadToggle.IsEnabled = false;
+            HistoryButton.IsEnabled = false;
+            ScratchpadPopup.IsOpen = false;
+            CloseHistoryPopup();
+        }
+
+        // Enables/disables toolbar buttons based on whether a C++ startup project is loaded.
+        private void UpdateControlsEnabled()
+        {
+            ThreadHelper.ThrowIfNotOnUIThread();
+            bool hasProject = GetStartupProject() != null;
+            ScratchpadToggle.IsEnabled = hasProject;
+            HistoryButton.IsEnabled = hasProject;
+            if (!hasProject)
+            {
+                ScratchpadPopup.IsOpen = false;
+                CloseHistoryPopup();
+            }
         }
 
         // ── Scratchpad / toggle persistence ───────────────────────────────────────
-        //
-        // State lives in a small binary file alongside the .sln:
-        //     <solutionDir>\.vs\<solutionName>\VSCmdPanel\state.dat
-        //
-        // This bypasses VS's .suo mechanism entirely, which is fragile because it
-        // requires the package to be loaded before VS reads the .suo. Our file is
-        // read/written directly by the control whenever it has a solution path —
-        // no package lifetime dependencies, no autoload required.
 
         private const byte StateFormatVersion = 1;
 
@@ -173,7 +213,7 @@ namespace VS_LaunchArguments
         {
             ThreadHelper.ThrowIfNotOnUIThread();
             var path = GetScratchpadStatePath();
-            if (path == null) return; // No solution open — leave UI as-is
+            if (path == null) return;
 
             string text = string.Empty;
             bool toggle = false;
@@ -189,18 +229,15 @@ namespace VS_LaunchArguments
                         if (version == StateFormatVersion)
                         {
                             toggle = reader.ReadBoolean();
-                            text   = reader.ReadString();
+                            text = reader.ReadString();
                         }
                     }
                 }
-                catch
-                {
-                    // Corrupt or partial file — fall through with defaults
-                }
+                catch { }
             }
 
             _updatingFields = true;
-            ScratchpadTextBox.Text     = text;
+            ScratchpadTextBox.Text = text;
             ScratchpadToggle.IsChecked = toggle;
             _updatingFields = false;
         }
@@ -245,7 +282,6 @@ namespace VS_LaunchArguments
             SaveScratchpadStateNow();
         }
 
-        // Force any pending debounced save to commit immediately
         private void FlushPendingSave()
         {
             if (_saveTimer != null && _saveTimer.IsEnabled)
@@ -260,7 +296,290 @@ namespace VS_LaunchArguments
             ScheduleScratchpadSave();
         }
 
-        // ── IVsUpdateSolutionEvents — fires on config/platform change ─────────────
+
+        // ── Command-line history popup ────────────────────────────────────────────
+
+        // When the popup is open we subscribe to PreviewMouseDown on the root visual so
+        // any click outside the popup (or the H button itself) closes it.  The H button
+        // is excluded from "outside" so clicking it while open goes through the toggle
+        // path in HistoryButton_Click instead of the outside-click path.
+        private void SubscribeHistoryOutsideClick()
+        {
+            if (_historyOutsideSubscribed) return;
+            var root = PresentationSource.FromVisual(this)?.RootVisual as UIElement;
+            if (root == null) return;
+            root.AddHandler(PreviewMouseDownEvent,
+                new MouseButtonEventHandler(OnHistoryOutsideMouseDown), true);
+            _historyOutsideSubscribed = true;
+        }
+
+        private void UnsubscribeHistoryOutsideClick()
+        {
+            if (!_historyOutsideSubscribed) return;
+            var root = PresentationSource.FromVisual(this)?.RootVisual as UIElement;
+            root?.RemoveHandler(PreviewMouseDownEvent,
+                new MouseButtonEventHandler(OnHistoryOutsideMouseDown));
+            _historyOutsideSubscribed = false;
+        }
+
+        private void OnHistoryOutsideMouseDown(object sender, MouseButtonEventArgs e)
+        {
+            if (!HistoryPopupContent.IsMouseOver && !HistoryButton.IsMouseOver)
+                CloseHistoryPopup();
+        }
+
+        private void CloseHistoryPopup()
+        {
+            UnsubscribeHistoryOutsideClick();
+            HistoryPopup.IsOpen = false;
+        }
+
+        private void HistoryButton_Click(object sender, RoutedEventArgs e)
+        {
+            ThreadHelper.ThrowIfNotOnUIThread();
+
+            if (HistoryPopup.IsOpen)
+            {
+                CloseHistoryPopup();
+                return;
+            }
+
+            var path = GetHistoryFilePath(out var exeName);
+            if (path == null || !File.Exists(path)) return;
+
+            var entries = LoadHistoryFile(path);
+            if (entries.Count == 0) return;
+
+            HistoryHeaderText.Text = "Command history — " + exeName;
+            HistoryListBox.ItemsSource = entries;
+            HistoryListBox.SelectedIndex = entries.Count - 1;
+            HistoryPopup.Width = MeasureHistoryPopupWidth(entries);
+            HistoryPopup.IsOpen = true;
+            SubscribeHistoryOutsideClick();
+            // Scroll to newest (bottom) after layout pass
+            Dispatcher.BeginInvoke(new Action(() =>
+                HistoryListBox.ScrollIntoView(HistoryListBox.SelectedItem)));
+            HistoryListBox.Focus();
+        }
+
+        private void HistoryListBox_KeyDown(object sender, KeyEventArgs e)
+        {
+            if (e.Key == Key.Enter)
+            {
+                CommitHistorySelection();
+                e.Handled = true;
+            }
+            else if (e.Key == Key.Escape)
+            {
+                CloseHistoryPopup();
+                ArgsTextBox.Focus();
+                e.Handled = true;
+            }
+        }
+
+        private void HistoryListBox_MouseDoubleClick(object sender, MouseButtonEventArgs e)
+        {
+            CommitHistorySelection();
+        }
+
+        private void CommitHistorySelection()
+        {
+            var entry = HistoryListBox.SelectedItem as HistoryEntry;
+            if (entry != null)
+                ArgsTextBox.Text = entry.Command;
+            CloseHistoryPopup();
+        }
+
+        // Click on the per-row trashcan. Removes the entry from the JSON file and
+        // refreshes the displayed list.  Marked Handled so the click doesn't also
+        // select/commit the row underneath.
+        private void DeleteHistoryItem_Click(object sender, RoutedEventArgs e)
+        {
+            ThreadHelper.ThrowIfNotOnUIThread();
+
+            var entry = (sender as FrameworkElement)?.DataContext as HistoryEntry;
+            if (entry == null) { e.Handled = true; return; }
+
+            var path = GetHistoryFilePath(out _);
+            if (path == null || !File.Exists(path)) { e.Handled = true; return; }
+
+            if (DeleteHistoryEntry(path, entry))
+            {
+                if (HistoryListBox.ItemsSource is List<HistoryEntry> list)
+                {
+                    list.Remove(entry);
+                    HistoryListBox.Items.Refresh();
+                    if (list.Count == 0)
+                        CloseHistoryPopup();
+                }
+            }
+            e.Handled = true;
+        }
+
+        // Reads the history file, removes the first entry matching target's (command, time),
+        // and writes it back. Preserves all other top-level keys (e.g. colorScheme) and
+        // all other history entries unchanged. Returns true if an entry was removed.
+        private bool DeleteHistoryEntry(string path, HistoryEntry target)
+        {
+            try
+            {
+                var json = File.ReadAllText(path);
+                var serializer = new JavaScriptSerializer { MaxJsonLength = int.MaxValue };
+                var root = serializer.Deserialize<Dictionary<string, object>>(json);
+
+                if (root == null) return false;
+                if (!root.TryGetValue("history", out var histObj)) return false;
+                if (!(histObj is IEnumerable historyItems)) return false;
+
+                var newHistory = new List<object>();
+                bool removed = false;
+
+                foreach (var item in historyItems)
+                {
+                    if (!removed && item is Dictionary<string, object> entry)
+                    {
+                        string cmd = entry.TryGetValue("command", out var c) ? c as string : null;
+                        long time = 0;
+                        if (entry.TryGetValue("time", out var t))
+                        {
+                            switch (t)
+                            {
+                                case int ti: time = ti; break;
+                                case long tl: time = tl; break;
+                                case decimal td: time = (long)td; break;
+                                case double tdb: time = (long)tdb; break;
+                            }
+                        }
+
+                        if (cmd == target.Command && time == target.Time)
+                        {
+                            removed = true;
+                            continue;
+                        }
+                    }
+                    newHistory.Add(item);
+                }
+
+                if (!removed) return false;
+
+                root["history"] = newHistory;
+                File.WriteAllText(path, serializer.Serialize(root));
+                return true;
+            }
+            catch { return false; }
+        }
+
+        // Measures the longest command string at the current font to set popup width.
+        private double MeasureHistoryPopupWidth(IList<HistoryEntry> entries)
+        {
+            const double minWidth = 400;
+            const double maxWidth = 1200;
+            const double timestampW = 150; // "yyyy-MM-dd HH:mm" + italic margin
+            const double deleteW = 24;  // trashcan button column
+            const double chrome = 32;  // borders + scrollbar + item padding
+
+            string longest = string.Empty;
+            foreach (var entry in entries)
+                if (entry.Command.Length > longest.Length)
+                    longest = entry.Command;
+
+            if (string.IsNullOrEmpty(longest))
+                return minWidth;
+
+            try
+            {
+                var ft = new FormattedText(
+                    longest,
+                    CultureInfo.CurrentCulture,
+                    FlowDirection.LeftToRight,
+                    new Typeface("Consolas"),
+                    FontSize,
+                    Brushes.Black,
+                    VisualTreeHelper.GetDpi(this).PixelsPerDip);
+
+                return Math.Max(minWidth, Math.Min(maxWidth, ft.Width + timestampW + deleteW + chrome));
+            }
+            catch
+            {
+                return minWidth;
+            }
+        }
+
+        // Returns %LOCALAPPDATA%\<exename>_history. Expands MSBuild macros in
+        // VCDebugSettings.Command (typically $(TargetPath)), falls back to PrimaryOutput.
+        private string GetHistoryFilePath(out string exeName)
+        {
+            exeName = null;
+            ThreadHelper.ThrowIfNotOnUIThread();
+            try
+            {
+                var proj = GetStartupProject();
+                if (proj == null || !IsCppProject(proj)) return null;
+
+                var cfg = GetActiveVCConfig(proj);
+                if (cfg == null) return null;
+
+                var debug = cfg.DebugSettings as VCDebugSettings;
+                string exePath = debug?.Command;
+
+                if (!string.IsNullOrEmpty(exePath) && exePath.IndexOf("$(") >= 0)
+                    exePath = cfg.Evaluate(exePath);
+
+                if (string.IsNullOrEmpty(exePath))
+                    exePath = cfg.PrimaryOutput;
+
+                if (string.IsNullOrEmpty(exePath)) return null;
+
+                var name = Path.GetFileName(exePath);
+                if (string.IsNullOrEmpty(name)) return null;
+
+                exeName = name;
+                var localAppData = Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData);
+                return Path.Combine(localAppData, name + "_history");
+            }
+            catch { return null; }
+        }
+
+        // Parses { "history": [ { "command": "...", "time": 1234567890 }, ... ] }
+        // Returns entries in file order (oldest-first). Newest is at the bottom of the popup.
+        private List<HistoryEntry> LoadHistoryFile(string path)
+        {
+            var result = new List<HistoryEntry>();
+            try
+            {
+                var json = File.ReadAllText(path);
+                var serializer = new JavaScriptSerializer { MaxJsonLength = int.MaxValue };
+                var root = serializer.Deserialize<Dictionary<string, object>>(json);
+
+                if (root == null || !root.TryGetValue("history", out var histObj)) return result;
+                if (!(histObj is IEnumerable historyItems)) return result;
+
+                foreach (var item in historyItems)
+                {
+                    if (!(item is Dictionary<string, object> entry)) continue;
+                    if (!entry.TryGetValue("command", out var cmdObj) || !(cmdObj is string cmd)) continue;
+                    if (string.IsNullOrEmpty(cmd)) continue;
+
+                    long time = 0;
+                    if (entry.TryGetValue("time", out var tObj))
+                    {
+                        switch (tObj)
+                        {
+                            case int ti: time = ti; break;
+                            case long tl: time = tl; break;
+                            case decimal td: time = (long)td; break;
+                            case double tdb: time = (long)tdb; break;
+                        }
+                    }
+
+                    result.Add(new HistoryEntry { Command = cmd, Time = time });
+                }
+            }
+            catch { }
+            return result;
+        }
+
+        // ── IVsUpdateSolutionEvents ───────────────────────────────────────────────
 
         int IVsUpdateSolutionEvents.OnActiveProjectCfgChange(IVsHierarchy pIVsHierarchy)
         {
@@ -272,12 +591,12 @@ namespace VS_LaunchArguments
             return VSConstants.S_OK;
         }
 
-        int IVsUpdateSolutionEvents.UpdateSolution_Begin(ref int pfCancelUpdate)                           => VSConstants.S_OK;
+        int IVsUpdateSolutionEvents.UpdateSolution_Begin(ref int pfCancelUpdate) => VSConstants.S_OK;
         int IVsUpdateSolutionEvents.UpdateSolution_Done(int fSucceeded, int fModified, int fCancelCommand) => VSConstants.S_OK;
-        int IVsUpdateSolutionEvents.UpdateSolution_StartUpdate(ref int pfCancelUpdate)                     => VSConstants.S_OK;
-        int IVsUpdateSolutionEvents.UpdateSolution_Cancel()                                                => VSConstants.S_OK;
+        int IVsUpdateSolutionEvents.UpdateSolution_StartUpdate(ref int pfCancelUpdate) => VSConstants.S_OK;
+        int IVsUpdateSolutionEvents.UpdateSolution_Cancel() => VSConstants.S_OK;
 
-        // ── IVsSelectionEvents — fires on startup project change ──────────────────
+        // ── IVsSelectionEvents ────────────────────────────────────────────────────
 
         int IVsSelectionEvents.OnElementValueChanged(uint elementid, object varValueOld, object varValueNew)
         {
@@ -287,6 +606,7 @@ namespace VS_LaunchArguments
                 {
                     await ThreadHelper.JoinableTaskFactory.SwitchToMainThreadAsync();
                     RefreshFromActiveConfig();
+                    UpdateControlsEnabled();
                 });
             }
             return VSConstants.S_OK;
@@ -299,6 +619,75 @@ namespace VS_LaunchArguments
 
         int IVsSelectionEvents.OnCmdUIContextChanged(uint dwCmdID, int fActive) => VSConstants.S_OK;
 
+        // ── IVsDebuggerEvents — record history when debug session starts ──────────
+
+        int IVsDebuggerEvents.OnModeChange(DBGMODE dbgmodeNew)
+        {
+            if (dbgmodeNew == DBGMODE.DBGMODE_Run)
+                RecordHistoryEntry();
+            return VSConstants.S_OK;
+        }
+
+        // Appends the current args to the history file when the debugger starts.
+        // Skips empty args. Deduplicates (removes all prior entries with the same
+        // command). Caps the list at 100 entries, oldest first.
+        private void RecordHistoryEntry()
+        {
+            ThreadHelper.ThrowIfNotOnUIThread();
+
+            var args = ArgsTextBox.Text;
+            if (string.IsNullOrEmpty(args)) return;
+
+            var path = GetHistoryFilePath(out _);
+            if (path == null) return;
+
+            try
+            {
+                var serializer = new JavaScriptSerializer { MaxJsonLength = int.MaxValue };
+                Dictionary<string, object> root;
+
+                if (File.Exists(path))
+                {
+                    root = serializer.Deserialize<Dictionary<string, object>>(
+                               File.ReadAllText(path))
+                           ?? new Dictionary<string, object>();
+                }
+                else
+                {
+                    root = new Dictionary<string, object>();
+                }
+
+                // Collect existing entries, removing any that match the current args
+                var history = new List<object>();
+                if (root.TryGetValue("history", out var histObj) && histObj is IEnumerable existing)
+                {
+                    foreach (var item in existing)
+                    {
+                        if (item is Dictionary<string, object> entry &&
+                            entry.TryGetValue("command", out var c) && c as string == args)
+                            continue; // deduplicate
+                        history.Add(item);
+                    }
+                }
+
+                // Append newest entry at the end
+                history.Add(new Dictionary<string, object>
+                {
+                    ["command"] = args,
+                    ["time"] = DateTimeOffset.UtcNow.ToUnixTimeSeconds()
+                });
+
+                // Cap at 100 — drop oldest from the front
+                const int maxEntries = 100;
+                if (history.Count > maxEntries)
+                    history.RemoveRange(0, history.Count - maxEntries);
+
+                root["history"] = history;
+                File.WriteAllText(path, serializer.Serialize(root));
+            }
+            catch { }
+        }
+
         // ── Args/working-dir read/write ───────────────────────────────────────────
 
         private void LoadFromActiveProject()
@@ -307,15 +696,14 @@ namespace VS_LaunchArguments
             try
             {
                 var proj = GetStartupProject();
-                if (proj == null || !IsCppProject(proj))
-                    return;
+                if (proj == null || !IsCppProject(proj)) return;
 
                 string args = GetDebugProperty(proj, DebugProperty.CommandArguments);
-                string wd   = GetDebugProperty(proj, DebugProperty.WorkingDirectory);
+                string wd = GetDebugProperty(proj, DebugProperty.WorkingDirectory);
 
                 _updatingFields = true;
-                if (!string.IsNullOrEmpty(args)) ArgsTextBox.Text       = args;
-                if (!string.IsNullOrEmpty(wd))   WorkingDirTextBox.Text = wd;
+                if (!string.IsNullOrEmpty(args)) ArgsTextBox.Text = args;
+                if (!string.IsNullOrEmpty(wd)) WorkingDirTextBox.Text = wd;
                 _updatingFields = false;
             }
             catch { _updatingFields = false; }
@@ -327,11 +715,10 @@ namespace VS_LaunchArguments
             try
             {
                 var proj = GetStartupProject();
-                if (proj == null || !IsCppProject(proj))
-                    return;
+                if (proj == null || !IsCppProject(proj)) return;
 
                 ApplyOrSeed(proj, DebugProperty.CommandArguments, ArgsTextBox);
-                ApplyOrSeed(proj, DebugProperty.WorkingDirectory,  WorkingDirTextBox);
+                ApplyOrSeed(proj, DebugProperty.WorkingDirectory, WorkingDirTextBox);
             }
             catch { }
         }
@@ -361,11 +748,10 @@ namespace VS_LaunchArguments
             try
             {
                 var proj = GetStartupProject();
-                if (proj == null || !IsCppProject(proj))
-                    return;
+                if (proj == null || !IsCppProject(proj)) return;
 
                 string projArgs = GetDebugProperty(proj, DebugProperty.CommandArguments);
-                string projWd   = GetDebugProperty(proj, DebugProperty.WorkingDirectory);
+                string projWd = GetDebugProperty(proj, DebugProperty.WorkingDirectory);
 
                 _updatingFields = true;
                 if (projArgs != null && projArgs != ArgsTextBox.Text)
@@ -377,7 +763,7 @@ namespace VS_LaunchArguments
             catch { _updatingFields = false; }
         }
 
-        // ── Args/WD TextChanged handlers ──────────────────────────────────────────
+        // ── TextChanged handlers ──────────────────────────────────────────────────
 
         private void ArgsTextBox_TextChanged(object sender, TextChangedEventArgs e)
         {
@@ -418,37 +804,10 @@ namespace VS_LaunchArguments
             });
         }
 
-        private void OnEditFieldGotFocus(object sender, RoutedEventArgs e)
-        {
-            if (ScratchpadToggle.IsChecked != true) return;
-            ScratchpadPopup.Width = RootGrid.ActualWidth;
-            ScratchpadPopup.IsOpen = true;
-        }
-
-        private void OnAnyFieldLostFocus(object sender, RoutedEventArgs e)
-        {
-            // Defer one dispatcher pass so the incoming focus target is known before deciding to close.
-            // DispatcherPriority.Background is intentional — JoinableTaskFactory has no priority equivalent.
-#pragma warning disable VSTHRD001
-            Dispatcher.BeginInvoke(DispatcherPriority.Background, new Action(() =>
-            {
-                if (!ArgsTextBox.IsKeyboardFocused &&
-                    !WorkingDirTextBox.IsKeyboardFocused &&
-                    !ScratchpadTextBox.IsKeyboardFocused)
-                {
-                    ScratchpadPopup.IsOpen = false;
-                }
-            }));
-#pragma warning restore VSTHRD001
-        }
-
         private void ScratchpadToggle_Checked(object sender, RoutedEventArgs e)
         {
-            if (ArgsTextBox.IsKeyboardFocused || WorkingDirTextBox.IsKeyboardFocused)
-            {
-                ScratchpadPopup.Width = RootGrid.ActualWidth;
-                ScratchpadPopup.IsOpen = true;
-            }
+            ScratchpadPopup.Width = RootGrid.ActualWidth;
+            ScratchpadPopup.IsOpen = true;
             if (!_updatingFields) SaveScratchpadStateNow();
         }
 
@@ -458,7 +817,6 @@ namespace VS_LaunchArguments
             if (!_updatingFields) SaveScratchpadStateNow();
         }
 
-        // WPF re-creates the popup HWND on every open, so WS_EX_TOPMOST must be stripped each time.
         private void ScratchpadPopup_Opened(object sender, EventArgs e)
         {
             var source = PresentationSource.FromVisual(ScratchpadTextBox) as HwndSource;
@@ -467,8 +825,11 @@ namespace VS_LaunchArguments
                     SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE);
         }
 
-        private void OnApplicationDeactivated(object sender, EventArgs e) =>
+        private void OnApplicationDeactivated(object sender, EventArgs e)
+        {
             ScratchpadPopup.IsOpen = false;
+            CloseHistoryPopup();
+        }
 
         private void RootGrid_SizeChanged(object sender, SizeChangedEventArgs e) =>
             ScratchpadPopup.Width = e.NewSize.Width;
@@ -490,7 +851,7 @@ namespace VS_LaunchArguments
             ThreadHelper.ThrowIfNotOnUIThread();
             try
             {
-                var debug = GetActiveDebugSettings(project);
+                var debug = GetActiveVCConfig(project)?.DebugSettings as VCDebugSettings;
                 if (debug == null) return null;
                 return property == DebugProperty.CommandArguments
                     ? debug.CommandArguments
@@ -504,7 +865,7 @@ namespace VS_LaunchArguments
             ThreadHelper.ThrowIfNotOnUIThread();
             try
             {
-                var debug = GetActiveDebugSettings(project);
+                var debug = GetActiveVCConfig(project)?.DebugSettings as VCDebugSettings;
                 if (debug == null) return;
                 if (property == DebugProperty.CommandArguments)
                     debug.CommandArguments = value ?? string.Empty;
@@ -514,7 +875,7 @@ namespace VS_LaunchArguments
             catch { }
         }
 
-        private VCDebugSettings GetActiveDebugSettings(Project project)
+        private VCConfiguration GetActiveVCConfig(Project project)
         {
             ThreadHelper.ThrowIfNotOnUIThread();
 
@@ -527,15 +888,15 @@ namespace VS_LaunchArguments
             var activeCfg = cfgMgr.ActiveConfiguration;
             if (activeCfg == null) return null;
 
-            string configName   = activeCfg.ConfigurationName;
+            string configName = activeCfg.ConfigurationName;
             string platformName = activeCfg.PlatformName;
 
             foreach (VCConfiguration cfg in (IVCCollection)vcproj.Configurations)
             {
                 var platform = (VCPlatform)cfg.Platform;
-                if (string.Equals(cfg.ConfigurationName, configName,   StringComparison.OrdinalIgnoreCase) &&
-                    string.Equals(platform.Name,         platformName, StringComparison.OrdinalIgnoreCase))
-                    return (VCDebugSettings)cfg.DebugSettings;
+                if (string.Equals(cfg.ConfigurationName, configName, StringComparison.OrdinalIgnoreCase) &&
+                    string.Equals(platform.Name, platformName, StringComparison.OrdinalIgnoreCase))
+                    return cfg;
             }
             return null;
         }
@@ -545,18 +906,15 @@ namespace VS_LaunchArguments
             ThreadHelper.ThrowIfNotOnUIThread();
 
             var startupProjects = _dte.Solution.SolutionBuild.StartupProjects as Array;
-            if (startupProjects == null || startupProjects.Length == 0)
-                return null;
+            if (startupProjects == null || startupProjects.Length == 0) return null;
 
             string uniqueName = startupProjects.GetValue(0) as string;
-            if (string.IsNullOrEmpty(uniqueName))
-                return null;
+            if (string.IsNullOrEmpty(uniqueName)) return null;
 
             foreach (Project p in _dte.Solution.Projects)
             {
                 var found = FindProjectByUniqueNameRecursive(p, uniqueName);
-                if (found != null)
-                    return found;
+                if (found != null) return found;
             }
             return null;
         }
@@ -575,8 +933,7 @@ namespace VS_LaunchArguments
                     if (item.SubProject != null)
                     {
                         var found = FindProjectByUniqueNameRecursive(item.SubProject, uniqueName);
-                        if (found != null)
-                            return found;
+                        if (found != null) return found;
                     }
                 }
             }

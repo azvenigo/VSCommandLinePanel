@@ -14,7 +14,6 @@
             <Setter Property="HorizontalAlignment"      Value="Stretch"/>
         </Style>
 
-        <!-- Toggle button: dimmed when off, full opacity with bold border when on -->
         <Style x:Key="ScratchpadToggleStyle" TargetType="ToggleButton">
             <Setter Property="Background"       Value="Transparent"/>
             <Setter Property="BorderBrush"      Value="{DynamicResource {x:Static vsui:EnvironmentColors.ComboBoxBorderBrushKey}}"/>
@@ -33,24 +32,66 @@
                 </Trigger>
             </Style.Triggers>
         </Style>
+
+        <Style x:Key="ToolbarButtonStyle" TargetType="Button">
+            <Setter Property="Background"       Value="Transparent"/>
+            <Setter Property="BorderBrush"      Value="{DynamicResource {x:Static vsui:EnvironmentColors.ComboBoxBorderBrushKey}}"/>
+            <Setter Property="BorderThickness"  Value="1"/>
+            <Setter Property="Foreground"       Value="{DynamicResource {x:Static vsui:EnvironmentColors.ComboBoxTextBrushKey}}"/>
+            <Setter Property="Opacity"          Value="0.45"/>
+            <Setter Property="Padding"          Value="0"/>
+            <Setter Property="Focusable"        Value="False"/>
+            <Style.Triggers>
+                <Trigger Property="IsMouseOver" Value="True">
+                    <Setter Property="Opacity" Value="0.8"/>
+                </Trigger>
+                <Trigger Property="IsPressed" Value="True">
+                    <Setter Property="BorderBrush" Value="{DynamicResource {x:Static vsui:EnvironmentColors.ToolWindowTextBrushKey}}"/>
+                    <Setter Property="Opacity"     Value="1.0"/>
+                </Trigger>
+            </Style.Triggers>
+        </Style>
+
+        <!-- Delete (trashcan) button shown on hover for each history row -->
+        <Style x:Key="HistoryDeleteButtonStyle" TargetType="Button">
+            <Setter Property="Background"      Value="Transparent"/>
+            <Setter Property="BorderThickness" Value="0"/>
+            <Setter Property="Padding"         Value="3"/>
+            <Setter Property="Focusable"       Value="False"/>
+            <Setter Property="Cursor"          Value="Hand"/>
+            <Setter Property="Visibility"      Value="Hidden"/>
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="Button">
+                        <Border Background="{TemplateBinding Background}"
+                                Padding="{TemplateBinding Padding}">
+                            <ContentPresenter HorizontalAlignment="Center"
+                                              VerticalAlignment="Center"/>
+                        </Border>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+            <Style.Triggers>
+                <!-- Reveal when the row is hovered -->
+                <DataTrigger Binding="{Binding IsMouseOver, RelativeSource={RelativeSource AncestorType={x:Type ListBoxItem}}}" Value="True">
+                    <Setter Property="Visibility" Value="Visible"/>
+                </DataTrigger>
+                <!-- Subtle hover background on the button itself -->
+                <Trigger Property="IsMouseOver" Value="True">
+                    <Setter Property="Background" Value="{DynamicResource {x:Static vsui:EnvironmentColors.CommandBarHoverBrushKey}}"/>
+                </Trigger>
+            </Style.Triggers>
+        </Style>
     </UserControl.Resources>
 
-    <!--
-        Outer single-cell grid.  The Popup is declared here so it lives in the logical tree
-        (required for PlacementTarget binding), even though it floats outside the visual bounds.
-    -->
     <Grid x:Name="RootGrid" SizeChanged="RootGrid_SizeChanged">
 
-        <!--
-            Scratchpad popup — only opens when the toggle is on.
-            Opened handler strips WS_EX_TOPMOST via SetWindowPos (Popup.Topmost is .NET 6+ only).
-            Application.Current.Deactivated closes it when VS loses focus.
-        -->
+        <!-- Scratchpad popup -->
         <Popup x:Name="ScratchpadPopup"
                PlacementTarget="{Binding ElementName=RootGrid}"
                Placement="Top"
-               StaysOpen="True"
                VerticalOffset="-30"
+               StaysOpen="True"
                Opened="ScratchpadPopup_Opened">
             <Border BorderThickness="1"
                     BorderBrush="{DynamicResource {x:Static vsui:EnvironmentColors.ComboBoxBorderBrushKey}}"
@@ -60,18 +101,14 @@
                         <RowDefinition Height="Auto"/>
                         <RowDefinition Height="*"/>
                     </Grid.RowDefinitions>
-
-                    <!-- Title header with bottom separator -->
                     <Border Grid.Row="0"
                             BorderThickness="0,0,0,1"
                             BorderBrush="{DynamicResource {x:Static vsui:EnvironmentColors.ComboBoxBorderBrushKey}}"
                             Padding="6,3">
-                        <TextBlock Text="Command Scratchpad"
+                        <TextBlock Text="Scratchpad"
                                    FontWeight="SemiBold"
                                    Foreground="{DynamicResource {x:Static vsui:EnvironmentColors.ToolWindowTextBrushKey}}"/>
                     </Border>
-
-                    <!-- Scratchpad text area -->
                     <TextBox Grid.Row="1"
                              x:Name="ScratchpadTextBox"
                              Style="{StaticResource VsTextBoxStyle}"
@@ -81,37 +118,118 @@
                              TextWrapping="Wrap"
                              VerticalScrollBarVisibility="Auto"
                              FontFamily="Consolas"
-                             LostFocus="OnAnyFieldLostFocus"
-                             ToolTip="Scratchpad — copy/paste command lines to switch between (persisted per solution)"/>
+                             ToolTip="Scratchpad — persisted per solution"/>
                 </Grid>
             </Border>
         </Popup>
 
-        <!-- Main row: toggle | Args | drag splitter | Working Dir -->
+        <!-- History dropdown popup — lifecycle managed entirely in code -->
+        <Popup x:Name="HistoryPopup"
+               PlacementTarget="{Binding ElementName=RootGrid}"
+               Placement="Top"
+               StaysOpen="True">
+            <Border x:Name="HistoryPopupContent"
+                    BorderThickness="1"
+                    BorderBrush="{DynamicResource {x:Static vsui:EnvironmentColors.ComboBoxBorderBrushKey}}"
+                    Background="{DynamicResource {x:Static vsui:EnvironmentColors.ComboBoxBackgroundBrushKey}}">
+                <Grid>
+                    <Grid.RowDefinitions>
+                        <RowDefinition Height="Auto"/>
+                        <RowDefinition Height="*"/>
+                    </Grid.RowDefinitions>
+
+                    <!-- Header bar — shows exe name -->
+                    <Border Grid.Row="0"
+                            BorderThickness="0,0,0,1"
+                            BorderBrush="{DynamicResource {x:Static vsui:EnvironmentColors.ComboBoxBorderBrushKey}}"
+                            Padding="6,3">
+                        <TextBlock x:Name="HistoryHeaderText"
+                                   Text="Command history"
+                                   FontWeight="SemiBold"
+                                   Foreground="{DynamicResource {x:Static vsui:EnvironmentColors.ToolWindowTextBrushKey}}"/>
+                    </Border>
+
+                    <ListBox Grid.Row="1"
+                             x:Name="HistoryListBox"
+                             MaxHeight="400"
+                             BorderThickness="0"
+                             Background="Transparent"
+                             Foreground="{DynamicResource {x:Static vsui:EnvironmentColors.ComboBoxTextBrushKey}}"
+                             HorizontalContentAlignment="Stretch"
+                             ScrollViewer.HorizontalScrollBarVisibility="Disabled"
+                             PreviewKeyDown="HistoryListBox_KeyDown"
+                             MouseDoubleClick="HistoryListBox_MouseDoubleClick">
+                        <ListBox.ItemTemplate>
+                            <DataTemplate>
+                                <Grid Margin="2,1">
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="*"/>
+                                        <ColumnDefinition Width="Auto"/>
+                                        <ColumnDefinition Width="Auto"/>
+                                    </Grid.ColumnDefinitions>
+                                    <TextBlock Grid.Column="0"
+                                               Text="{Binding Command}"
+                                               FontFamily="Consolas"
+                                               TextTrimming="None"
+                                               VerticalAlignment="Center"/>
+                                    <TextBlock Grid.Column="1"
+                                               Text="{Binding TimeText}"
+                                               Margin="20,0,4,0"
+                                               Opacity="0.55"
+                                               FontStyle="Italic"
+                                               VerticalAlignment="Center"/>
+                                    <Button Grid.Column="2"
+                                            Style="{StaticResource HistoryDeleteButtonStyle}"
+                                            Click="DeleteHistoryItem_Click"
+                                            ToolTip="Remove from history">
+                                        <TextBlock Text="&#xE74D;"
+                                                   FontFamily="Segoe MDL2 Assets"
+                                                   FontSize="12"
+                                                   Opacity="0.7"/>
+                                    </Button>
+                                </Grid>
+                            </DataTemplate>
+                        </ListBox.ItemTemplate>
+                    </ListBox>
+                </Grid>
+            </Border>
+        </Popup>
+
+        <!-- Main row: toolbar | Args | splitter | Working Dir -->
         <Grid>
             <Grid.ColumnDefinitions>
-                <ColumnDefinition Width="Auto"/>                    <!-- scratchpad toggle -->
-                <ColumnDefinition Width="2*"/>                      <!-- args -->
-                <ColumnDefinition Width="4"/>                       <!-- splitter -->
-                <ColumnDefinition Width="*" MinWidth="120"/>        <!-- working dir -->
+                <ColumnDefinition Width="Auto"/>
+                <ColumnDefinition Width="2*"/>
+                <ColumnDefinition Width="4"/>
+                <ColumnDefinition Width="*" MinWidth="120"/>
             </Grid.ColumnDefinitions>
 
-            <!-- Scratchpad toggle — Focusable=False so clicking it doesn't steal focus from the edit fields -->
-            <ToggleButton Grid.Column="0"
-                          x:Name="ScratchpadToggle"
-                          Style="{StaticResource ScratchpadToggleStyle}"
-                          Width="16"
-                          Margin="0,0,2,0"
-                          IsChecked="False"
-                          Checked="ScratchpadToggle_Checked"
-                          Unchecked="ScratchpadToggle_Unchecked"
-                          ToolTip="Toggle scratchpad auto-popup on key focus">
-                <TextBlock Text="🗎" FontSize="16"
-                           VerticalAlignment="Center"
-                           HorizontalAlignment="Center"/>
-            </ToggleButton>
+            <!-- Toolbar: scratchpad toggle + history button -->
+            <StackPanel Grid.Column="0" Orientation="Horizontal" Margin="0,0,2,0">
+                <ToggleButton x:Name="ScratchpadToggle"
+                              Style="{StaticResource ScratchpadToggleStyle}"
+                              Width="16"
+                              IsChecked="False"
+                              Checked="ScratchpadToggle_Checked"
+                              Unchecked="ScratchpadToggle_Unchecked"
+                              ToolTip="Toggle scratchpad popup">
+                    <TextBlock Text="🗎" FontSize="16"
+                               VerticalAlignment="Center"
+                               HorizontalAlignment="Center" Foreground="{DynamicResource {x:Static SystemColors.ControlBrushKey}}"/>
+                </ToggleButton>
 
-            <!-- Args field with placeholder overlay -->
+                <Button x:Name="HistoryButton"
+                        Style="{StaticResource ToolbarButtonStyle}"
+                        Width="16" Margin="2,0,0,0"
+                        Click="HistoryButton_Click"
+                        ToolTip="Show command history (%LOCALAPPDATA%\&lt;exename&gt;_history)">
+                    <TextBlock Text="↺" FontSize="16"
+                               VerticalAlignment="Center"
+                               HorizontalAlignment="Center" Foreground="{DynamicResource {x:Static SystemColors.ControlBrushKey}}"/>
+                </Button>
+            </StackPanel>
+
+            <!-- Args -->
             <Grid Grid.Column="1">
                 <TextBox x:Name="ArgsTextBox"
                          Style="{StaticResource VsTextBoxStyle}"
@@ -119,14 +237,13 @@
                          TextWrapping="NoWrap"
                          MaxLines="1"
                          VerticalContentAlignment="Center"
+                         FontFamily="Consolas"
                          ScrollViewer.VerticalScrollBarVisibility="Hidden"
                          TextChanged="ArgsTextBox_TextChanged"
-                         GotFocus="OnEditFieldGotFocus"
-                         LostFocus="OnAnyFieldLostFocus"
                          DataObject.Pasting="OnSingleLinePasting"
-                         ToolTip="Start application with these arguments"/>
+                         ToolTip="Command-line arguments for the active debug configuration"/>
                 <TextBlock IsHitTestVisible="False"
-                           Text="Args..."
+                           Text="Command-line arguments..."
                            VerticalAlignment="Center"
                            Margin="5,0,0,0"
                            Opacity="0.4"
@@ -144,14 +261,13 @@
                 </TextBlock>
             </Grid>
 
-            <!-- Draggable column splitter -->
             <GridSplitter Grid.Column="2"
                           Width="4"
                           HorizontalAlignment="Stretch"
                           VerticalAlignment="Stretch"
                           Background="{DynamicResource {x:Static vsui:EnvironmentColors.ToolWindowBorderBrushKey}}"/>
 
-            <!-- Working Dir field with placeholder overlay -->
+            <!-- Working Dir -->
             <Grid Grid.Column="3">
                 <TextBox x:Name="WorkingDirTextBox"
                          Style="{StaticResource VsTextBoxStyle}"
@@ -159,14 +275,13 @@
                          TextWrapping="NoWrap"
                          MaxLines="1"
                          VerticalContentAlignment="Center"
+                         FontFamily="Consolas"
                          ScrollViewer.VerticalScrollBarVisibility="Hidden"
                          TextChanged="WorkingDirTextBox_TextChanged"
-                         GotFocus="OnEditFieldGotFocus"
-                         LostFocus="OnAnyFieldLostFocus"
                          DataObject.Pasting="OnSingleLinePasting"
-                         ToolTip="Working directory"/>
+                         ToolTip="Working directory for the active debug configuration"/>
                 <TextBlock IsHitTestVisible="False"
-                           Text="Working Directory..."
+                           Text="Working directory..."
                            VerticalAlignment="Center"
                            Margin="5,0,0,0"
                            Opacity="0.4"
