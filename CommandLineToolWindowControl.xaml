@@ -30,6 +30,9 @@
                 <Trigger Property="IsMouseOver" Value="True">
                     <Setter Property="Opacity" Value="0.8"/>
                 </Trigger>
+                <Trigger Property="IsEnabled" Value="False">
+                    <Setter Property="Opacity" Value="0.2"/>
+                </Trigger>
             </Style.Triggers>
         </Style>
 
@@ -48,6 +51,9 @@
                 <Trigger Property="IsPressed" Value="True">
                     <Setter Property="BorderBrush" Value="{DynamicResource {x:Static vsui:EnvironmentColors.ToolWindowTextBrushKey}}"/>
                     <Setter Property="Opacity"     Value="1.0"/>
+                </Trigger>
+                <Trigger Property="IsEnabled" Value="False">
+                    <Setter Property="Opacity" Value="0.2"/>
                 </Trigger>
             </Style.Triggers>
         </Style>
@@ -135,6 +141,7 @@
             <Border x:Name="HistoryPopupContent"
                     BorderThickness="1"
                     CornerRadius="4"
+                    ClipToBounds="True"
                     BorderBrush="{DynamicResource {x:Static vsui:EnvironmentColors.CommandBarBorderBrushKey}}"
                     Background="{DynamicResource {x:Static vsui:EnvironmentColors.AccentBorderBrushKey}}">
                 <Grid>
@@ -145,7 +152,7 @@
 
                     <!-- Header bar — shows exe name -->
                     <Border Grid.Row="0"
-                            BorderThickness="2"
+                            BorderThickness="0,0,0,1"
                             BorderBrush="{DynamicResource {x:Static vsui:EnvironmentColors.ComboBoxBorderBrushKey}}"
                             Background="{DynamicResource {x:Static vsui:EnvironmentColors.CommandBarGradientBeginBrushKey}}"
                             Padding="6,3">
@@ -162,9 +169,9 @@
                              Background="Transparent"
                              Foreground="{DynamicResource {x:Static vsui:EnvironmentColors.ComboBoxTextBrushKey}}"
                              HorizontalContentAlignment="Stretch"
-                             ScrollViewer.HorizontalScrollBarVisibility="Disabled"
+                             ScrollViewer.HorizontalScrollBarVisibility="Auto"
                              PreviewKeyDown="HistoryListBox_KeyDown"
-                             SelectionChanged="HistoryListBox_SelectionChanged">
+                             MouseLeftButtonUp="HistoryListBox_MouseLeftButtonUp">
                         <ListBox.ItemTemplate>
                             <DataTemplate>
                                 <Grid Margin="2,1">
@@ -176,7 +183,8 @@
                                     <TextBlock Grid.Column="0"
                                                Text="{Binding Command}"
                                                FontFamily="Consolas"
-                                               TextTrimming="None"
+                                               TextTrimming="CharacterEllipsis"
+                                               ToolTip="{Binding Command}"
                                                VerticalAlignment="Center"/>
                                     <TextBlock Grid.Column="1"
                                                Text="{Binding TimeText}"
