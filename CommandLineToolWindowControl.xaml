@@ -13,7 +13,11 @@
             <Setter Property="VerticalAlignment"        Value="Stretch"/>
             <Setter Property="HorizontalAlignment"      Value="Stretch"/>
         </Style>
-
+        
+        <Style x:Key="VsWorkingDirTextBoxStyle" TargetType="TextBox" BasedOn="{StaticResource VsTextBoxStyle}">
+            <Setter Property="Background" Value="{DynamicResource {x:Static vsui:EnvironmentColors.ToolWindowBackgroundBrushKey}}"/>
+        </Style>
+        
         <Style x:Key="ScratchpadToggleStyle" TargetType="ToggleButton">
             <Setter Property="Background"       Value="Transparent"/>
             <Setter Property="BorderBrush"      Value="{DynamicResource {x:Static vsui:EnvironmentColors.ComboBoxBorderBrushKey}}"/>
@@ -203,15 +207,20 @@
         </Popup>
 
         <!-- Main row: toolbar | Args | splitter | Working Dir -->
-        <Grid>
+        <!-- VerticalAlignment="Top" pins the row to its natural single-line height.
+             Without it the Grid stretches to fill the frame, making the TextBoxes
+             grow vertically when the tool window is docked taller than one line. -->
+        <Grid VerticalAlignment="Top" Margin="0,2,0,2">
             <Grid.ColumnDefinitions>
                 <ColumnDefinition Width="Auto"/>
-                <ColumnDefinition Width="2*"/>
+                <ColumnDefinition Width="2*" MinWidth="120"/>
                 <ColumnDefinition Width="4"/>
                 <ColumnDefinition Width="*" MinWidth="120"/>
+                <ColumnDefinition Width="Auto"/>
+                <ColumnDefinition Width="Auto"/>
             </Grid.ColumnDefinitions>
 
-            <!-- Toolbar: scratchpad toggle + history button -->
+            <!-- Toolbar: scratchpad toggle, history button, about button -->
             <StackPanel Grid.Column="0" Orientation="Horizontal" Margin="0,0,2,0">
                 <ToggleButton x:Name="ScratchpadToggle"
                               Style="{StaticResource ScratchpadToggleStyle}"
@@ -222,18 +231,19 @@
                               ToolTip="Toggle scratchpad popup">
                     <TextBlock Text="🗎" FontSize="16"
                                VerticalAlignment="Center"
-                               HorizontalAlignment="Center" 
+                               HorizontalAlignment="Center"
                                Foreground="{DynamicResource {x:Static SystemColors.ControlBrushKey}}"/>
                 </ToggleButton>
 
                 <Button x:Name="HistoryButton"
                         Style="{StaticResource ToolbarButtonStyle}"
-                        Width="16" Margin="2,0,0,0"
+                        Width="18" Margin="2,0,0,0"
                         Click="HistoryButton_Click"
                         ToolTip="Show command history (%LOCALAPPDATA%\&lt;exename&gt;_history)">
                     <TextBlock Text="↺" FontSize="16"
                                VerticalAlignment="Center"
-                               HorizontalAlignment="Center" Foreground="{DynamicResource {x:Static SystemColors.ControlBrushKey}}"/>
+                               HorizontalAlignment="Center"
+                               Foreground="{DynamicResource {x:Static SystemColors.ControlBrushKey}}"/>
                 </Button>
             </StackPanel>
 
@@ -273,12 +283,12 @@
                           Width="4"
                           HorizontalAlignment="Stretch"
                           VerticalAlignment="Stretch"
-                          Background="{DynamicResource {x:Static vsui:EnvironmentColors.ToolWindowBorderBrushKey}}"/>
+                          Background="{DynamicResource {x:Static SystemColors.WindowFrameBrushKey}}"/>
 
             <!-- Working Dir -->
             <Grid Grid.Column="3">
                 <TextBox x:Name="WorkingDirTextBox"
-                         Style="{StaticResource VsTextBoxStyle}"
+                         Style="{StaticResource VsWorkingDirTextBoxStyle}"
                          AcceptsReturn="False"
                          TextWrapping="NoWrap"
                          MaxLines="1"
@@ -306,6 +316,33 @@
                     </TextBlock.Style>
                 </TextBlock>
             </Grid>
+
+            <Button x:Name="BrowserFolderButton"
+                    Grid.Column="4"
+                    Style="{StaticResource ToolbarButtonStyle}"
+                    Width="18" Margin="2,0,0,0"
+                    VerticalAlignment="Stretch"
+                    Click="BrowseFolderButton_Click"
+                    ToolTip="Browse Working Folder">
+                <TextBlock Text="📁" FontSize="13"
+                           VerticalAlignment="Center"
+                           HorizontalAlignment="Center" Foreground="White"/>
+            </Button>
+
+            <Button x:Name="AboutButton"
+                    Grid.Column="5"
+                    Style="{StaticResource ToolbarButtonStyle}"
+                    Width="18" Margin="2,0,0,0"
+                    VerticalAlignment="Stretch"
+                    Click="AboutButton_Click"
+                    ToolTip="About">
+                <TextBlock Text="?" FontSize="13" FontWeight="Bold"
+                           VerticalAlignment="Center"
+                           HorizontalAlignment="Center"
+                           Foreground="{DynamicResource {x:Static SystemColors.ControlBrushKey}}"/>
+            </Button>
+
+
         </Grid>
     </Grid>
 </UserControl>

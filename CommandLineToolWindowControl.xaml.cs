@@ -13,23 +13,22 @@ using System.Runtime.InteropServices;
 using System.Web.Script.Serialization;
 using System.Windows;
 using System.Windows.Controls;
-using System.Windows.Controls.Primitives;
 using System.Windows.Input;
 using System.Windows.Interop;
 using System.Windows.Media;
 using System.Windows.Threading;
+using WinForms = System.Windows.Forms;
 
 #pragma warning disable VSSDK007, VSTHRD110
 
 namespace VS_LaunchArguments
 {
     // ── History data ──────────────────────────────────────────────────────────────
-    // Moved here from HistoryWindow.xaml.cs (that file can now be removed from the project).
 
     public class HistoryEntry
     {
         public string Command { get; set; }
-        public long   Time    { get; set; }
+        public long Time { get; set; }
 
         public string TimeText =>
             Time > 0
@@ -66,8 +65,8 @@ namespace VS_LaunchArguments
         // ── P/Invoke — strip WS_EX_TOPMOST from the scratchpad popup HWND ─────────
 
         private static readonly IntPtr HWND_NOTOPMOST = new IntPtr(-2);
-        private const uint SWP_NOMOVE     = 0x0002;
-        private const uint SWP_NOSIZE     = 0x0001;
+        private const uint SWP_NOMOVE = 0x0002;
+        private const uint SWP_NOSIZE = 0x0001;
         private const uint SWP_NOACTIVATE = 0x0010;
 
         [DllImport("user32.dll", SetLastError = false)]
@@ -84,9 +83,9 @@ namespace VS_LaunchArguments
             _dte = (DTE2)Package.GetGlobalService(typeof(DTE));
 
             _solutionEvents = _dte.Events.SolutionEvents;
-            _solutionEvents.Opened        += OnSolutionOpened;
+            _solutionEvents.Opened += OnSolutionOpened;
             _solutionEvents.BeforeClosing += OnSolutionBeforeClosing;
-            _solutionEvents.AfterClosing  += OnSolutionClosed;
+            _solutionEvents.AfterClosing += OnSolutionClosed;
 
             _buildManager = Package.GetGlobalService(typeof(SVsSolutionBuildManager)) as IVsSolutionBuildManager2;
             if (_buildManager != null)
@@ -107,7 +106,7 @@ namespace VS_LaunchArguments
             Unloaded += OnUnloaded;
 
             LoadScratchpadState();
-            LoadFromActiveProject();
+            LoadFieldsFromActiveProject();
             UpdateControlsEnabled();
         }
 
@@ -149,7 +148,7 @@ namespace VS_LaunchArguments
             {
                 await ThreadHelper.JoinableTaskFactory.SwitchToMainThreadAsync();
                 LoadScratchpadState();
-                LoadFromActiveProject();
+                LoadFieldsFromActiveProject();
                 UpdateControlsEnabled();
             });
         }
@@ -162,14 +161,14 @@ namespace VS_LaunchArguments
         private void OnSolutionClosed()
         {
             _updatingFields = true;
-            ArgsTextBox.Text           = string.Empty;
-            WorkingDirTextBox.Text     = string.Empty;
-            ScratchpadTextBox.Text     = string.Empty;
+            ArgsTextBox.Text = string.Empty;
+            WorkingDirTextBox.Text = string.Empty;
+            ScratchpadTextBox.Text = string.Empty;
             ScratchpadToggle.IsChecked = false;
             _updatingFields = false;
             ScratchpadToggle.IsEnabled = false;
-            HistoryButton.IsEnabled    = false;
-            ScratchpadPopup.IsOpen     = false;
+            HistoryButton.IsEnabled = false;
+            ScratchpadPopup.IsOpen = false;
             CloseHistoryPopup();
         }
 
@@ -177,9 +176,9 @@ namespace VS_LaunchArguments
         private void UpdateControlsEnabled()
         {
             ThreadHelper.ThrowIfNotOnUIThread();
-            bool hasProject            = GetStartupProject() != null;
+            bool hasProject = GetStartupProject() != null;
             ScratchpadToggle.IsEnabled = hasProject;
-            HistoryButton.IsEnabled    = hasProject;
+            HistoryButton.IsEnabled = hasProject;
             if (!hasProject)
             {
                 ScratchpadPopup.IsOpen = false;
@@ -229,7 +228,7 @@ namespace VS_LaunchArguments
                         if (version == StateFormatVersion)
                         {
                             toggle = reader.ReadBoolean();
-                            text   = reader.ReadString();
+                            text = reader.ReadString();
                         }
                     }
                 }
@@ -237,7 +236,7 @@ namespace VS_LaunchArguments
             }
 
             _updatingFields = true;
-            ScratchpadTextBox.Text     = text;
+            ScratchpadTextBox.Text = text;
             ScratchpadToggle.IsChecked = toggle;
             _updatingFields = false;
         }
@@ -296,7 +295,6 @@ namespace VS_LaunchArguments
             ScheduleScratchpadSave();
         }
 
-
         // ── Command-line history popup ────────────────────────────────────────────
 
         // When the popup is open we subscribe to PreviewMouseDown on the root visual so
@@ -350,11 +348,11 @@ namespace VS_LaunchArguments
             var entries = LoadHistoryFile(path);
             if (entries.Count == 0) return;
 
-            HistoryHeaderText.Text       = "Command history — " + exeName;
-            HistoryListBox.ItemsSource   = entries;
+            HistoryHeaderText.Text = "Command history — " + exeName;
+            HistoryListBox.ItemsSource = entries;
             HistoryListBox.SelectedIndex = entries.Count - 1;
-            HistoryPopup.Width           = MeasureHistoryPopupWidth(entries);
-            HistoryPopup.IsOpen          = true;
+            HistoryPopup.Width = MeasureHistoryPopupWidth(entries);
+            HistoryPopup.IsOpen = true;
             SubscribeHistoryOutsideClick();
             // Scroll to newest (bottom) after layout pass
             Dispatcher.BeginInvoke(new Action(() =>
@@ -362,7 +360,7 @@ namespace VS_LaunchArguments
             HistoryListBox.Focus();
         }
 
-        private void HistoryListBox_KeyDown(object sender, KeyEventArgs e)
+        private void HistoryListBox_KeyDown(object sender, System.Windows.Input.KeyEventArgs e)
         {
             if (e.Key == Key.Enter)
             {
@@ -393,7 +391,7 @@ namespace VS_LaunchArguments
         }
 
         // Click on the per-row trashcan. Removes the entry from the JSON file and
-        // refreshes the displayed list.  Marked Handled so the click doesn't also
+        // refreshes the displayed list. Marked Handled so the click doesn't also
         // select/commit the row underneath.
         private void DeleteHistoryItem_Click(object sender, RoutedEventArgs e)
         {
@@ -425,9 +423,9 @@ namespace VS_LaunchArguments
         {
             try
             {
-                var json       = File.ReadAllText(path);
+                var json = File.ReadAllText(path);
                 var serializer = new JavaScriptSerializer { MaxJsonLength = int.MaxValue };
-                var root       = serializer.Deserialize<Dictionary<string, object>>(json);
+                var root = serializer.Deserialize<Dictionary<string, object>>(json);
 
                 if (root == null) return false;
                 if (!root.TryGetValue("history", out var histObj)) return false;
@@ -446,10 +444,10 @@ namespace VS_LaunchArguments
                         {
                             switch (t)
                             {
-                                case int ti:     time = ti;       break;
-                                case long tl:    time = tl;       break;
+                                case int ti: time = ti; break;
+                                case long tl: time = tl; break;
                                 case decimal td: time = (long)td; break;
-                                case double tdb: time = (long)tdb;break;
+                                case double tdb: time = (long)tdb; break;
                             }
                         }
 
@@ -474,11 +472,11 @@ namespace VS_LaunchArguments
         // Measures the longest command string at the current font to set popup width.
         private double MeasureHistoryPopupWidth(IList<HistoryEntry> entries)
         {
-            const double minWidth   = 400;
-            const double maxWidth   = 1200;
+            const double minWidth = 400;
+            const double maxWidth = 1200;
             const double timestampW = 150; // "yyyy-MM-dd HH:mm" + italic margin
-            const double deleteW    = 24;  // trashcan button column
-            const double chrome     = 32;  // borders + scrollbar + item padding
+            const double deleteW = 24;  // trashcan button column
+            const double chrome = 32;  // borders + scrollbar + item padding
 
             string longest = string.Empty;
             foreach (var entry in entries)
@@ -493,7 +491,7 @@ namespace VS_LaunchArguments
                 var ft = new FormattedText(
                     longest,
                     CultureInfo.CurrentCulture,
-                    FlowDirection.LeftToRight,
+                    System.Windows.FlowDirection.LeftToRight,
                     new Typeface("Consolas"),
                     FontSize,
                     Brushes.Black,
@@ -549,9 +547,9 @@ namespace VS_LaunchArguments
             var result = new List<HistoryEntry>();
             try
             {
-                var json       = File.ReadAllText(path);
+                var json = File.ReadAllText(path);
                 var serializer = new JavaScriptSerializer { MaxJsonLength = int.MaxValue };
-                var root       = serializer.Deserialize<Dictionary<string, object>>(json);
+                var root = serializer.Deserialize<Dictionary<string, object>>(json);
 
                 if (root == null || !root.TryGetValue("history", out var histObj)) return result;
                 if (!(histObj is IEnumerable historyItems)) return result;
@@ -567,8 +565,8 @@ namespace VS_LaunchArguments
                     {
                         switch (tObj)
                         {
-                            case int ti:     time = ti;      break;
-                            case long tl:    time = tl;      break;
+                            case int ti: time = ti; break;
+                            case long tl: time = tl; break;
                             case decimal td: time = (long)td; break;
                             case double tdb: time = (long)tdb; break;
                         }
@@ -588,15 +586,15 @@ namespace VS_LaunchArguments
             ThreadHelper.JoinableTaskFactory.RunAsync(async () =>
             {
                 await ThreadHelper.JoinableTaskFactory.SwitchToMainThreadAsync();
-                RefreshFromActiveConfig();
+                LoadFieldsFromActiveProject();
             });
             return VSConstants.S_OK;
         }
 
-        int IVsUpdateSolutionEvents.UpdateSolution_Begin(ref int pfCancelUpdate)                           => VSConstants.S_OK;
+        int IVsUpdateSolutionEvents.UpdateSolution_Begin(ref int pfCancelUpdate) => VSConstants.S_OK;
         int IVsUpdateSolutionEvents.UpdateSolution_Done(int fSucceeded, int fModified, int fCancelCommand) => VSConstants.S_OK;
-        int IVsUpdateSolutionEvents.UpdateSolution_StartUpdate(ref int pfCancelUpdate)                     => VSConstants.S_OK;
-        int IVsUpdateSolutionEvents.UpdateSolution_Cancel()                                                => VSConstants.S_OK;
+        int IVsUpdateSolutionEvents.UpdateSolution_StartUpdate(ref int pfCancelUpdate) => VSConstants.S_OK;
+        int IVsUpdateSolutionEvents.UpdateSolution_Cancel() => VSConstants.S_OK;
 
         // ── IVsSelectionEvents ────────────────────────────────────────────────────
 
@@ -607,7 +605,7 @@ namespace VS_LaunchArguments
                 ThreadHelper.JoinableTaskFactory.RunAsync(async () =>
                 {
                     await ThreadHelper.JoinableTaskFactory.SwitchToMainThreadAsync();
-                    RefreshFromActiveConfig();
+                    LoadFieldsFromActiveProject();
                     UpdateControlsEnabled();
                 });
             }
@@ -676,7 +674,7 @@ namespace VS_LaunchArguments
                 history.Add(new Dictionary<string, object>
                 {
                     ["command"] = args,
-                    ["time"]    = DateTimeOffset.UtcNow.ToUnixTimeSeconds()
+                    ["time"] = DateTimeOffset.UtcNow.ToUnixTimeSeconds()
                 });
 
                 // Cap at 100 — drop oldest from the front
@@ -692,7 +690,16 @@ namespace VS_LaunchArguments
 
         // ── Args/working-dir read/write ───────────────────────────────────────────
 
-        private void LoadFromActiveProject()
+        // Reads the active startup project's stored args and working directory into
+        // the fields. Project values are authoritative on load — used on project switch,
+        // config change, solution open, and focus-in. Live edits flow the other
+        // direction (field → project) via PushToProject on TextChanged.
+        //
+        // Note: always overwrites the fields regardless of current content.
+        // The old ApplyOrSeed approach conditionally wrote stale field contents
+        // back into the newly-active project; that caused fields to never update
+        // on switch and could silently clobber the new project's stored args.
+        private void LoadFieldsFromActiveProject()
         {
             ThreadHelper.ThrowIfNotOnUIThread();
             try
@@ -700,66 +707,12 @@ namespace VS_LaunchArguments
                 var proj = GetStartupProject();
                 if (proj == null || !IsCppProject(proj)) return;
 
-                string args = GetDebugProperty(proj, DebugProperty.CommandArguments);
-                string wd   = GetDebugProperty(proj, DebugProperty.WorkingDirectory);
+                string args = GetDebugProperty(proj, DebugProperty.CommandArguments) ?? string.Empty;
+                string wd = GetDebugProperty(proj, DebugProperty.WorkingDirectory) ?? string.Empty;
 
                 _updatingFields = true;
-                if (!string.IsNullOrEmpty(args)) ArgsTextBox.Text       = args;
-                if (!string.IsNullOrEmpty(wd))   WorkingDirTextBox.Text = wd;
-                _updatingFields = false;
-            }
-            catch { _updatingFields = false; }
-        }
-
-        private void RefreshFromActiveConfig()
-        {
-            ThreadHelper.ThrowIfNotOnUIThread();
-            try
-            {
-                var proj = GetStartupProject();
-                if (proj == null || !IsCppProject(proj)) return;
-
-                ApplyOrSeed(proj, DebugProperty.CommandArguments, ArgsTextBox);
-                ApplyOrSeed(proj, DebugProperty.WorkingDirectory,  WorkingDirTextBox);
-            }
-            catch { }
-        }
-
-        private void ApplyOrSeed(Project proj, DebugProperty property, TextBox field)
-        {
-            ThreadHelper.ThrowIfNotOnUIThread();
-            if (string.IsNullOrEmpty(field.Text))
-            {
-                string stored = GetDebugProperty(proj, property);
-                if (!string.IsNullOrEmpty(stored))
-                {
-                    _updatingFields = true;
-                    field.Text = stored;
-                    _updatingFields = false;
-                }
-            }
-            else
-            {
-                SetDebugProperty(proj, property, field.Text);
-            }
-        }
-
-        private void SyncFromActiveProject()
-        {
-            ThreadHelper.ThrowIfNotOnUIThread();
-            try
-            {
-                var proj = GetStartupProject();
-                if (proj == null || !IsCppProject(proj)) return;
-
-                string projArgs = GetDebugProperty(proj, DebugProperty.CommandArguments);
-                string projWd   = GetDebugProperty(proj, DebugProperty.WorkingDirectory);
-
-                _updatingFields = true;
-                if (projArgs != null && projArgs != ArgsTextBox.Text)
-                    ArgsTextBox.Text = projArgs;
-                if (projWd   != null && projWd   != WorkingDirTextBox.Text)
-                    WorkingDirTextBox.Text = projWd;
+                if (ArgsTextBox.Text != args) ArgsTextBox.Text = args;
+                if (WorkingDirTextBox.Text != wd) WorkingDirTextBox.Text = wd;
                 _updatingFields = false;
             }
             catch { _updatingFields = false; }
@@ -797,18 +750,16 @@ namespace VS_LaunchArguments
 
         private void OnIsKeyboardFocusWithinChanged(object sender, DependencyPropertyChangedEventArgs e)
         {
+            // Re-sync on focus-in as a safety net: picks up any args changes made
+            // via the project Properties dialog while the panel was not focused.
             if (!(bool)e.NewValue) return;
-
-            ThreadHelper.JoinableTaskFactory.RunAsync(async () =>
-            {
-                await ThreadHelper.JoinableTaskFactory.SwitchToMainThreadAsync();
-                SyncFromActiveProject();
-            });
+            ThreadHelper.ThrowIfNotOnUIThread();
+            LoadFieldsFromActiveProject();
         }
 
         private void ScratchpadToggle_Checked(object sender, RoutedEventArgs e)
         {
-            ScratchpadPopup.Width  = RootGrid.ActualWidth;
+            ScratchpadPopup.Width = RootGrid.ActualWidth;
             ScratchpadPopup.IsOpen = true;
             if (!_updatingFields) SaveScratchpadStateNow();
         }
@@ -842,6 +793,46 @@ namespace VS_LaunchArguments
             string text = e.DataObject.GetData(DataFormats.UnicodeText) as string ?? string.Empty;
             string sanitized = text.Replace("\r\n", " ").Replace("\r", " ").Replace("\n", " ");
             e.DataObject = new DataObject(DataFormats.UnicodeText, sanitized);
+        }
+
+        private void BrowseFolderButton_Click(object sender, RoutedEventArgs e)
+        {
+            ThreadHelper.ThrowIfNotOnUIThread();
+
+            using (var dialog = new WinForms.FolderBrowserDialog())
+            {
+                dialog.Description = "Select working directory";
+                dialog.ShowNewFolderButton = true;
+
+                string current = WorkingDirTextBox.Text.Trim();
+                if (Directory.Exists(current))
+                    dialog.SelectedPath = current;
+
+                if (dialog.ShowDialog() == WinForms.DialogResult.OK)
+                    WorkingDirTextBox.Text = dialog.SelectedPath;
+            }
+        }
+
+
+        private void AboutButton_Click(object sender, RoutedEventArgs e)
+        {
+            ThreadHelper.ThrowIfNotOnUIThread();
+
+            var ver = GetType().Assembly.GetName().Version;
+            string msg =
+                "VisualStudio Command Args Panel\n\n" +
+                "Edits CommandArguments and WorkingDirectory for the active C++ startup " +
+                "project, with a per-solution scratchpad and per-exe command history.\n\n" +
+                "Written by Alex Zvenigorodsky.\n" +
+                $"Version {ver.Major}.{ver.Minor}";
+
+            VsShellUtilities.ShowMessageBox(
+                ServiceProvider.GlobalProvider,
+                msg,
+                "About VS Command Line Panel",
+                OLEMSGICON.OLEMSGICON_INFO,
+                OLEMSGBUTTON.OLEMSGBUTTON_OK,
+                OLEMSGDEFBUTTON.OLEMSGDEFBUTTON_FIRST);
         }
 
         // ── VCProject helpers ─────────────────────────────────────────────────────
@@ -890,14 +881,14 @@ namespace VS_LaunchArguments
             var activeCfg = cfgMgr.ActiveConfiguration;
             if (activeCfg == null) return null;
 
-            string configName   = activeCfg.ConfigurationName;
+            string configName = activeCfg.ConfigurationName;
             string platformName = activeCfg.PlatformName;
 
             foreach (VCConfiguration cfg in (IVCCollection)vcproj.Configurations)
             {
                 var platform = (VCPlatform)cfg.Platform;
-                if (string.Equals(cfg.ConfigurationName, configName,   StringComparison.OrdinalIgnoreCase) &&
-                    string.Equals(platform.Name,         platformName, StringComparison.OrdinalIgnoreCase))
+                if (string.Equals(cfg.ConfigurationName, configName, StringComparison.OrdinalIgnoreCase) &&
+                    string.Equals(platform.Name, platformName, StringComparison.OrdinalIgnoreCase))
                     return cfg;
             }
             return null;
