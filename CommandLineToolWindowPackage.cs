@@ -1,4 +1,5 @@
 using Microsoft.VisualStudio.Shell;
+using Microsoft.VisualStudio.Shell.Interop;
 using System;
 using System.Diagnostics.CodeAnalysis;
 using System.Runtime.InteropServices;
@@ -9,7 +10,10 @@ namespace VS_LaunchArguments
 {
     [PackageRegistration(UseManagedResourcesOnly = true, AllowsBackgroundLoading = true)]
     [ProvideMenuResource("Menus.ctmenu", 1)]
-    [ProvideToolWindow(typeof(CommandLineToolWindow))]
+    [ProvideToolWindow(typeof(CommandLineToolWindow),
+        Style       = VsDockStyle.Linked,
+        Window      = ToolWindowGuids80.Outputwindow,
+        Orientation = ToolWindowOrientation.Bottom)]
     [Guid(PackageGuidString)]
     [SuppressMessage("StyleCop.CSharp.DocumentationRules", "SA1650:ElementDocumentationMustBeSpelledCorrectly",
         Justification = "pkgdef, VS and vsixmanifest are valid VS terms")]

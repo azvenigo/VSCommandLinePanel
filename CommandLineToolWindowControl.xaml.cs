@@ -38,7 +38,7 @@ namespace VS_LaunchArguments
 
     // ── Control ───────────────────────────────────────────────────────────────────
 
-    public partial class CommandLineToolWindowControl : UserControl, IVsUpdateSolutionEvents, IVsSelectionEvents, IVsDebuggerEvents
+    public partial class CommandLineToolWindowControl : UserControl, IVsUpdateSolutionEvents, IVsSelectionEvents
     {
         private const uint SEID_StartupProject = 3;
 
@@ -53,8 +53,8 @@ namespace VS_LaunchArguments
         private IVsMonitorSelection _monitorSelection;
         private uint _selectionCookie;
 
-        private IVsDebugger _debugger;
-        private uint _debuggerCookie;
+        // Held as a field to prevent GC of the COM event sink
+        private DebuggerEvents _debuggerEvents;
 
         private DispatcherTimer _saveTimer;
 
@@ -95,9 +95,8 @@ namespace VS_LaunchArguments
             if (_monitorSelection != null)
                 _monitorSelection.AdviseSelectionEvents(this, out _selectionCookie);
 
-            _debugger = Package.GetGlobalService(typeof(SVsShellDebugger)) as IVsDebugger;
-            if (_debugger != null)
-                _debugger.AdviseDebuggerEvents(this, out _debuggerCookie);
+            _debuggerEvents = _dte.Events.DebuggerEvents;
+            _debuggerEvents.OnEnterRunMode += OnDebuggerEnterRunMode;
 
             Application.Current.Deactivated += OnApplicationDeactivated;
 
@@ -133,14 +132,8 @@ namespace VS_LaunchArguments
                 _monitorSelection.UnadviseSelectionEvents(_selectionCookie);
                 _selectionCookie = 0;
             }
-            if (_debuggerCookie != 0 && _debugger != null)
-            {
-                _debugger.UnadviseDebuggerEvents(_debuggerCookie);
-                _debuggerCookie = 0;
-            }
+            _debuggerEvents.OnEnterRunMode -= OnDebuggerEnterRunMode;
         }
-
-        // ── Solution events ───────────────────────────────────────────────────────
 
         private void OnSolutionOpened()
         {
@@ -277,12 +270,14 @@ namespace VS_LaunchArguments
 
         private void OnSaveTimerTick(object sender, EventArgs e)
         {
+            ThreadHelper.ThrowIfNotOnUIThread();
             _saveTimer.Stop();
             SaveScratchpadStateNow();
         }
 
         private void FlushPendingSave()
         {
+            ThreadHelper.ThrowIfNotOnUIThread();
             if (_saveTimer != null && _saveTimer.IsEnabled)
             {
                 _saveTimer.Stop();
@@ -355,8 +350,10 @@ namespace VS_LaunchArguments
             HistoryPopup.IsOpen = true;
             SubscribeHistoryOutsideClick();
             // Scroll to newest (bottom) after layout pass
+#pragma warning disable VSTHRD001
             Dispatcher.BeginInvoke(new Action(() =>
                 HistoryListBox.ScrollIntoView(HistoryListBox.SelectedItem)));
+#pragma warning restore VSTHRD001
             HistoryListBox.Focus();
         }
 
@@ -375,11 +372,14 @@ namespace VS_LaunchArguments
             }
         }
 
-        private void HistoryListBox_SelectionChanged(object sender, SelectionChangedEventArgs e)
+        private void HistoryListBox_MouseLeftButtonUp(object sender, MouseButtonEventArgs e)
         {
-            // Ignore the programmatic selection set when the popup first opens
-            if (!HistoryPopup.IsOpen) return;
-            CommitHistorySelection();
+            // ContainerFromElement walks up from the clicked element to the nearest ListBoxItem.
+            // Returns null if the click landed on the listbox background (between items).
+            var item = ItemsControl.ContainerFromElement(
+                HistoryListBox, e.OriginalSource as DependencyObject) as ListBoxItem;
+            if (item != null)
+                CommitHistorySelection();
         }
 
         private void CommitHistorySelection()
@@ -473,10 +473,25 @@ namespace VS_LaunchArguments
         private double MeasureHistoryPopupWidth(IList<HistoryEntry> entries)
         {
             const double minWidth = 400;
-            const double maxWidth = 1200;
             const double timestampW = 150; // "yyyy-MM-dd HH:mm" + italic margin
             const double deleteW = 24;  // trashcan button column
             const double chrome = 32;  // borders + scrollbar + item padding
+
+            // Cap at 80% of the screen the tool window is currently on
+            double maxWidth = SystemParameters.PrimaryScreenWidth * 0.8;
+            try
+            {
+                var source = PresentationSource.FromVisual(this);
+                if (source?.CompositionTarget != null)
+                {
+                    double dpiX   = source.CompositionTarget.TransformToDevice.M11;
+                    var physPt    = this.PointToScreen(new Point(0, 0));
+                    var screen    = System.Windows.Forms.Screen.FromPoint(
+                                       new System.Drawing.Point((int)physPt.X, (int)physPt.Y));
+                    maxWidth      = screen.WorkingArea.Width / dpiX * 0.8;
+                }
+            }
+            catch { }
 
             string longest = string.Empty;
             foreach (var entry in entries)
@@ -619,13 +634,14 @@ namespace VS_LaunchArguments
 
         int IVsSelectionEvents.OnCmdUIContextChanged(uint dwCmdID, int fActive) => VSConstants.S_OK;
 
-        // ── IVsDebuggerEvents — record history when debug session starts ──────────
+        // ── Debugger event — record history when a debug session starts ───────────
+        // DTE's OnEnterRunMode fires exactly once per launch from the DTE event system,
+        // cleanly above the low-level debugger state machine.
 
-        int IVsDebuggerEvents.OnModeChange(DBGMODE dbgmodeNew)
+        private void OnDebuggerEnterRunMode(dbgEventReason reason)
         {
-            if (dbgmodeNew == DBGMODE.DBGMODE_Run)
-                RecordHistoryEntry();
-            return VSConstants.S_OK;
+            ThreadHelper.ThrowIfNotOnUIThread();
+            RecordHistoryEntry();
         }
 
         // Appends the current args to the history file when the debugger starts.
@@ -711,8 +727,54 @@ namespace VS_LaunchArguments
                 string wd = GetDebugProperty(proj, DebugProperty.WorkingDirectory) ?? string.Empty;
 
                 _updatingFields = true;
-                if (ArgsTextBox.Text != args) ArgsTextBox.Text = args;
-                if (WorkingDirTextBox.Text != wd) WorkingDirTextBox.Text = wd;
+                if (!string.IsNullOrEmpty(args)) ArgsTextBox.Text       = args;
+                if (!string.IsNullOrEmpty(wd))   WorkingDirTextBox.Text = wd;
+                _updatingFields = false;
+            }
+            catch { _updatingFields = false; }
+        }
+
+        // Config or startup project changed — read the new config's values and display
+        // them. Always overwrites the field (even with empty) so the user sees exactly
+        // what the newly active config has stored.
+        private void RefreshFromActiveConfig()
+        {
+            ThreadHelper.ThrowIfNotOnUIThread();
+            try
+            {
+                var proj = GetStartupProject();
+                if (proj == null || !IsCppProject(proj)) return;
+
+                string args = GetDebugProperty(proj, DebugProperty.CommandArguments);
+                string wd   = GetDebugProperty(proj, DebugProperty.WorkingDirectory);
+
+                _updatingFields = true;
+                ArgsTextBox.Text       = args ?? string.Empty;
+                WorkingDirTextBox.Text = wd   ?? string.Empty;
+                _updatingFields = false;
+            }
+            catch { _updatingFields = false; }
+        }
+
+        // Called on focus to catch external edits (e.g. via Project Properties dialog).
+        // Only updates if the project has a non-empty value that differs — never clears
+        // the field just because the project has nothing stored for this config.
+        private void SyncFromActiveProject()
+        {
+            ThreadHelper.ThrowIfNotOnUIThread();
+            try
+            {
+                var proj = GetStartupProject();
+                if (proj == null || !IsCppProject(proj)) return;
+
+                string projArgs = GetDebugProperty(proj, DebugProperty.CommandArguments);
+                string projWd   = GetDebugProperty(proj, DebugProperty.WorkingDirectory);
+
+                _updatingFields = true;
+                if (!string.IsNullOrEmpty(projArgs) && projArgs != ArgsTextBox.Text)
+                    ArgsTextBox.Text = projArgs;
+                if (!string.IsNullOrEmpty(projWd) && projWd != WorkingDirTextBox.Text)
+                    WorkingDirTextBox.Text = projWd;
                 _updatingFields = false;
             }
             catch { _updatingFields = false; }
@@ -759,9 +821,10 @@ namespace VS_LaunchArguments
 
         private void ScratchpadToggle_Checked(object sender, RoutedEventArgs e)
         {
-            ScratchpadPopup.Width = RootGrid.ActualWidth;
+            if (_updatingFields) return; // don't auto-open during state restore on load
+            ScratchpadPopup.Width  = RootGrid.ActualWidth * 0.8;
             ScratchpadPopup.IsOpen = true;
-            if (!_updatingFields) SaveScratchpadStateNow();
+            SaveScratchpadStateNow();
         }
 
         private void ScratchpadToggle_Unchecked(object sender, RoutedEventArgs e)
